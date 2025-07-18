@@ -5,6 +5,7 @@ import pyvista as pv
 from src.ruledSurface import trimesh_to_pyvista, combine_and_triangulate_surfaces
 
 from scipy.spatial import Delaunay
+import os
 
 
 def step1_get_draw_directions(draw_direction, merged_red_mesh):
@@ -415,14 +416,19 @@ def trimesh_to_pvpoly(tri_mesh):
                        np.hstack((np.full((len(tri_mesh.faces), 1), 3), tri_mesh.faces)))
 
 
-def generate_metamold_red(mesh_path, mold_half_path, draw_direction):
+def generate_metamold_red(mesh_path, mold_half_path, draw_direction, results_dir=None):
     """
     Main function to create and visualize a ruled surface from a mesh and draw direction.
+    Now saves the metamold to file.
 
     Args:
         mesh_path (str): combined surface mesh
         mold_half_path (str): Path to the mold half mesh (merged_red / merged_blue)
         draw_direction (np.array): The draw direction vector [x, y, z]
+        results_dir (str): Directory to save the metamold file (optional)
+
+    Returns:
+        str: Path to the saved metamold file
     """
     # Load the mesh
     try:
@@ -430,7 +436,7 @@ def generate_metamold_red(mesh_path, mold_half_path, draw_direction):
         merged_red = trimesh.load(mold_half_path)
     except Exception as e:
         print(f"Error loading mesh: {e}")
-        return
+        return None
 
     # Step 1: Get draw directions
     red_draw_direction, blue_draw_direction = step1_get_draw_directions(draw_direction, merged_red)
@@ -453,34 +459,48 @@ def generate_metamold_red(mesh_path, mold_half_path, draw_direction):
         boundary_points, plane_origin, plane_normal)
 
     projected_mesh = bottom_surface(projected_points)
+
     # Step 5: Create ruled surface
     ruled_surface = step5_create_ruled_surface(boundary_points, projected_points)
+
+    # NEW: Combine all components to create the complete metamold
+    metamold_red = create_complete_metamold(merged_red, ruled_surface, projected_mesh, "red")
+
+    # NEW: Save the metamold to file
+    metamold_red_path = save_metamold(metamold_red, results_dir, "metamold_red.stl")
 
     # Visualize the process
     visualize_ruled_surface_process(
         boundary_points, projected_points, ruled_surface,
         plane_origin, plane_normal, centroid, red_mesh, merged_red, projected_mesh)
 
+    return metamold_red_path
 
-def generate_metamold_blue(mesh_path, mold_half_path, draw_direction):
+
+def generate_metamold_blue(mesh_path, mold_half_path, draw_direction, results_dir=None):
     """
     Main function to create and visualize a ruled surface from a mesh and draw direction.
+    Now saves the metamold to file.
 
     Args:
         mesh_path (str): combined surface mesh
         mold_half_path (str): Path to the mold half mesh (merged_red / merged_blue)
         draw_direction (np.array): The draw direction vector [x, y, z]
+        results_dir (str): Directory to save the metamold file (optional)
+
+    Returns:
+        str: Path to the saved metamold file
     """
     # Load the mesh
     try:
         red_mesh = trimesh.load(mesh_path)
-        merged_red = trimesh.load(mold_half_path)
+        merged_blue = trimesh.load(mold_half_path)
     except Exception as e:
         print(f"Error loading mesh: {e}")
-        return
+        return None
 
     # Step 1: Get draw directions
-    red_draw_direction, blue_draw_direction = step1_get_draw_directions(draw_direction, merged_red)
+    red_draw_direction, blue_draw_direction = step1_get_draw_directions(draw_direction, merged_blue)
 
     # Step 2: Calculate max extension distance and get boundary points
     max_distance, centroid, boundary_points = step2_calculate_max_extension_distance(
@@ -500,10 +520,118 @@ def generate_metamold_blue(mesh_path, mold_half_path, draw_direction):
         boundary_points, plane_origin, plane_normal)
 
     projected_mesh = bottom_surface(projected_points)
+
     # Step 5: Create ruled surface
     ruled_surface = step5_create_ruled_surface(boundary_points, projected_points)
+
+    # NEW: Combine all components to create the complete metamold
+    metamold_blue = create_complete_metamold(merged_blue, ruled_surface, projected_mesh, "blue")
+
+    # NEW: Save the metamold to file
+    metamold_blue_path = save_metamold(metamold_blue, results_dir, "metamold_blue.stl")
 
     # Visualize the process
     visualize_ruled_surface_process(
         boundary_points, projected_points, ruled_surface,
-        plane_origin, plane_normal, centroid, red_mesh, merged_red, projected_mesh)
+        plane_origin, plane_normal, centroid, red_mesh, merged_blue, projected_mesh)
+
+    return metamold_blue_path
+
+
+def create_complete_metamold(mold_half, ruled_surface, projected_mesh, mold_type):
+    """
+    Combine the mold half, ruled surface, and projected mesh to create a complete metamold.
+
+    Args:
+        mold_half (trimesh.Trimesh): The split mold half mesh
+        ruled_surface (pyvista.PolyData): The ruled surface connecting to the projection plane
+        projected_mesh (pyvista.PolyData): The bottom surface mesh
+        mold_type (str): "red" or "blue" for identification
+
+    Returns:
+        trimesh.Trimesh: Complete metamold mesh
+    """
+    try:
+        mold_half_pv = trimesh_to_pvpoly(mold_half)
+
+        combined_mesh = mold_half_pv + ruled_surface + projected_mesh
+        return combined_mesh
+
+    except Exception as e:
+        print(f"Error creating complete metamold: {e}")
+        print(f"Returning original mold half for {mold_type}")
+        return mold_half
+
+
+def save_metamold(metamold_mesh, results_dir, filename):
+    """
+    Save the metamold mesh to a file.
+
+    Args:
+        metamold_mesh (trimesh.Trimesh): The metamold mesh to save
+        results_dir (str): Directory to save the file (optional)
+        filename (str): Name of the file to save
+
+    Returns:
+        str: Path to the saved file
+    """
+    try:
+        # Determine save path
+        if results_dir is not None:
+            save_path = os.path.join(results_dir, filename)
+        else:
+            save_path = filename
+
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+        # Export the mesh
+        metamold_mesh.export(save_path)
+
+        print(f"Saved metamold to: {save_path}")
+        return save_path
+
+    except Exception as e:
+        print(f"Error saving metamold: {e}")
+        return None
+
+
+def validate_metamold_files(results_dir):
+    """
+    Validate that the metamold files were created successfully.
+
+    Args:
+        results_dir (str): Directory containing the metamold files
+
+    Returns:
+        bool: True if both files exist and are valid
+    """
+    metamold_red_path = os.path.join(results_dir, "metamold_red.stl")
+    metamold_blue_path = os.path.join(results_dir, "metamold_blue.stl")
+
+    files_exist = os.path.exists(metamold_red_path) and os.path.exists(metamold_blue_path)
+
+    if files_exist:
+        try:
+            # Try to load the files to validate they're proper STL files
+            red_mesh = trimesh.load(metamold_red_path)
+            blue_mesh = trimesh.load(metamold_blue_path)
+
+            red_valid = len(red_mesh.vertices) > 0 and len(red_mesh.faces) > 0
+            blue_valid = len(blue_mesh.vertices) > 0 and len(blue_mesh.faces) > 0
+
+            if red_valid and blue_valid:
+                print("✓ Both metamold files validated successfully")
+                print(f"  Red metamold: {len(red_mesh.vertices)} vertices, {len(red_mesh.faces)} faces")
+                print(f"  Blue metamold: {len(blue_mesh.vertices)} vertices, {len(blue_mesh.faces)} faces")
+                return True
+            else:
+                print("✗ Metamold files exist but contain invalid geometry")
+                return False
+
+        except Exception as e:
+            print(f"✗ Error validating metamold files: {e}")
+            return False
+    else:
+        print("✗ Metamold files not found")
+        return False

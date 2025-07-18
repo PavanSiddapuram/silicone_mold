@@ -13,6 +13,7 @@ from src.merge_isolated_regions import cleanup_isolated_regions
 from src.ruledSurface import ruledSurface
 from src.generate_metamold import generate_metamold_red
 from src.generate_metamold import generate_metamold_blue
+from src.generate_metamold import validate_metamold_files
 
 import time
 import sys
@@ -121,11 +122,29 @@ ruledSurface(
 
 """ GENERATE THE METAMOLD HALVES """
 
+""" GENERATE THE METAMOLD HALVES """
+
 combined_mesh_path = os.path.join(results_dir, "combined_parting_surface.stl")
 
-generate_metamold_red(
-    combined_mesh_path, merged_red_path, draw_direction
+print("Generating metamold halves...")
+
+# Generate red metamold and save to file
+metamold_red_path = generate_metamold_red(
+    combined_mesh_path, merged_blue_path, draw_direction, results_dir
 )
-generate_metamold_blue(
-    combined_mesh_path, merged_blue_path, draw_direction
+
+# Generate blue metamold and save to file
+metamold_blue_path = generate_metamold_blue(
+    combined_mesh_path, merged_red_path, draw_direction, results_dir
 )
+
+# Validate that the metamold files were created successfully
+if not validate_metamold_files(results_dir):
+    print("Error: Metamold generation failed. Cannot proceed with secondary membranes.")
+    sys.exit(1)
+
+print("Metamold generation completed successfully!")
+print(f"Red metamold saved to: {metamold_red_path}")
+print(f"Blue metamold saved to: {metamold_blue_path}")
+
+""" COMPUTE THE SECONDARY (ADDITIONAL) MEMBRANES """

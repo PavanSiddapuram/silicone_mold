@@ -116,9 +116,9 @@ print(f"Total time taken is {end_time - start_time:.2f} seconds")
 display_split_faces(merged_red, merged_blue)
 
 """ CREATE RULED SURFACE AND THE COMBINED PARTING SURFACE """
-ruledSurface(
-    merged_blue_path, merged_red_path, mesh_path
-)
+combined_parting_surface = ruledSurface(
+        merged_blue_path, merged_red_path, mesh_path
+    )
 
 """ GENERATE THE METAMOLD HALVES """
 
@@ -130,12 +130,12 @@ print("Generating metamold halves...")
 
 # Generate red metamold and save to file
 metamold_red_path = generate_metamold_red(
-    combined_mesh_path, merged_blue_path, draw_direction, results_dir
+    combined_mesh_path, merged_blue_path, draw_direction, combined_parting_surface, results_dir
 )
 
 # Generate blue metamold and save to file
 metamold_blue_path = generate_metamold_blue(
-    combined_mesh_path, merged_red_path, draw_direction, results_dir
+    combined_mesh_path, merged_red_path, draw_direction, combined_parting_surface, results_dir
 )
 
 # Validate that the metamold files were created successfully

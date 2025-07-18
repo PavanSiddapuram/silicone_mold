@@ -317,3 +317,5 @@ def ruledSurface(file1, file2, file3):
     print("Combined surface saved successfully.")
     visualize_combined_surface(combined_surface)
 
+    return combined_surface
+

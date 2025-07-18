@@ -417,7 +417,8 @@ def trimesh_to_pvpoly(tri_mesh):
     return pv.PolyData(tri_mesh.vertices, faces_with_size)
 
 
-def generate_metamold_red(mesh_path, mold_half_path, draw_direction, results_dir=None):
+def generate_metamold_red(mesh_path, mold_half_path, draw_direction,
+                          combined_parting_surface, results_dir=None):
     """
     Main function to create and visualize a ruled surface from a mesh and draw direction.
     Now saves the metamold to file.
@@ -465,7 +466,8 @@ def generate_metamold_red(mesh_path, mold_half_path, draw_direction, results_dir
     ruled_surface = step5_create_ruled_surface(boundary_points, projected_points)
 
     # NEW: Combine all components to create the complete metamold
-    metamold_red = create_complete_metamold(merged_red, ruled_surface, projected_mesh, "red")
+    metamold_red = create_complete_metamold(merged_red, ruled_surface, projected_mesh,
+                                            combined_parting_surface, "red")
 
     # NEW: Save the metamold to file
     metamold_red_path = save_metamold(metamold_red, results_dir, "metamold_red.stl")
@@ -478,7 +480,8 @@ def generate_metamold_red(mesh_path, mold_half_path, draw_direction, results_dir
     return metamold_red_path
 
 
-def generate_metamold_blue(mesh_path, mold_half_path, draw_direction, results_dir=None):
+def generate_metamold_blue(mesh_path, mold_half_path, draw_direction,
+                           combined_parting_surface, results_dir=None):
     """
     Main function to create and visualize a ruled surface from a mesh and draw direction.
     Now saves the metamold to file.
@@ -526,7 +529,8 @@ def generate_metamold_blue(mesh_path, mold_half_path, draw_direction, results_di
     ruled_surface = step5_create_ruled_surface(boundary_points, projected_points)
 
     # NEW: Combine all components to create the complete metamold
-    metamold_blue = create_complete_metamold(merged_blue, ruled_surface, projected_mesh, "blue")
+    metamold_blue = create_complete_metamold(merged_blue, ruled_surface, projected_mesh,
+                                             combined_parting_surface, "blue")
 
     # NEW: Save the metamold to file
     metamold_blue_path = save_metamold(metamold_blue, results_dir, "metamold_blue.stl")
@@ -539,7 +543,8 @@ def generate_metamold_blue(mesh_path, mold_half_path, draw_direction, results_di
     return metamold_blue_path
 
 
-def create_complete_metamold(mold_half, ruled_surface, projected_mesh, mold_type):
+def create_complete_metamold(mold_half, ruled_surface, projected_mesh,
+                             combined_parting_surface, mold_type):
     """
     Combine the mold half, ruled surface, and projected mesh to create a complete metamold.
 
@@ -547,6 +552,7 @@ def create_complete_metamold(mold_half, ruled_surface, projected_mesh, mold_type
         mold_half (trimesh.Trimesh): The split mold half mesh
         ruled_surface (pyvista.PolyData): The ruled surface connecting to the projection plane
         projected_mesh (pyvista.PolyData): The bottom surface mesh
+        combined_parting_surface (pyvista.PolyData): The combined parting surface mesh
         mold_type (str): "red" or "blue" for identification
 
     Returns:
@@ -555,7 +561,7 @@ def create_complete_metamold(mold_half, ruled_surface, projected_mesh, mold_type
     try:
         mold_half_pv = trimesh_to_pvpoly(mold_half)
 
-        combined_mesh = mold_half_pv + ruled_surface + projected_mesh
+        combined_mesh = mold_half_pv + ruled_surface + projected_mesh + combined_parting_surface
         return combined_mesh
 
     except Exception as e:

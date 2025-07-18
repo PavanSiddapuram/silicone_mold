@@ -412,8 +412,9 @@ def visualize_ruled_surface_process(boundary_points, projected_points, ruled_sur
 
 
 def trimesh_to_pvpoly(tri_mesh):
-    return pv.PolyData(tri_mesh.vertices,
-                       np.hstack((np.full((len(tri_mesh.faces), 1), 3), tri_mesh.faces)))
+    faces = tri_mesh.faces.reshape(-1, 3)
+    faces_with_size = np.hstack((np.full((faces.shape[0], 1), 3), faces))
+    return pv.PolyData(tri_mesh.vertices, faces_with_size)
 
 
 def generate_metamold_red(mesh_path, mold_half_path, draw_direction, results_dir=None):
@@ -549,7 +550,7 @@ def create_complete_metamold(mold_half, ruled_surface, projected_mesh, mold_type
         mold_type (str): "red" or "blue" for identification
 
     Returns:
-        trimesh.Trimesh: Complete metamold mesh
+        pyvista.PolyData: Complete metamold mesh
     """
     try:
         mold_half_pv = trimesh_to_pvpoly(mold_half)
@@ -560,15 +561,15 @@ def create_complete_metamold(mold_half, ruled_surface, projected_mesh, mold_type
     except Exception as e:
         print(f"Error creating complete metamold: {e}")
         print(f"Returning original mold half for {mold_type}")
-        return mold_half
+        return mold_half_pv
 
 
 def save_metamold(metamold_mesh, results_dir, filename):
     """
-    Save the metamold mesh to a file.
+    Save the metamold mesh (PyVista) to a file.
 
     Args:
-        metamold_mesh (trimesh.Trimesh): The metamold mesh to save
+        metamold_mesh (pv.PolyData): The metamold mesh to save
         results_dir (str): Directory to save the file (optional)
         filename (str): Name of the file to save
 
@@ -585,8 +586,8 @@ def save_metamold(metamold_mesh, results_dir, filename):
         # Ensure directory exists
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-        # Export the mesh
-        metamold_mesh.export(save_path)
+        # Export the mesh using PyVista's save method
+        metamold_mesh.save(save_path)
 
         print(f"Saved metamold to: {save_path}")
         return save_path

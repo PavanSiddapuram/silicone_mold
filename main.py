@@ -122,8 +122,6 @@ combined_parting_surface = ruledSurface(
 
 """ GENERATE THE METAMOLD HALVES """
 
-""" GENERATE THE METAMOLD HALVES """
-
 combined_mesh_path = os.path.join(results_dir, "combined_parting_surface.stl")
 
 print("Generating metamold halves...")
@@ -148,3 +146,36 @@ print(f"Red metamold saved to: {metamold_red_path}")
 print(f"Blue metamold saved to: {metamold_blue_path}")
 
 """ COMPUTE THE SECONDARY (ADDITIONAL) MEMBRANES """
+
+print("\n" + "=" * 50)
+print("GENERATING SECONDARY MEMBRANES")
+print("=" * 50)
+
+# Import the secondary membrane generator
+from src.secondary_membranes import generate_secondary_membranes
+
+start_membrane_time = time.time()
+
+# Generate secondary membranes for both metamold halves
+try:
+    red_membranes, blue_membranes = generate_secondary_membranes(
+        results_dir, draw_direction, mesh_path
+    )
+
+    end_membrane_time = time.time()
+    print(f"Membrane generation time: {end_membrane_time - start_membrane_time:.2f} seconds")
+
+    # Print summary
+    print("\nSUMMARY:")
+    print(f"- Generated {len(red_membranes)} secondary membranes for red metamold")
+    print(f"- Generated {len(blue_membranes)} secondary membranes for blue metamold")
+    print(f"- Total processing time: {end_membrane_time - start_time:.2f} seconds")
+
+    print("\nFiles saved in:", results_dir)
+    print("- Metamold halves: metamold_red.stl, metamold_blue.stl")
+    print("- Secondary membranes: red_membrane_*.stl, blue_membrane_*.stl")
+
+except Exception as e:
+    print(f"Error generating secondary membranes: {e}")
+    print("Metamold generation was successful, but secondary membrane generation failed.")
+    print("Check the metamold files and try running the secondary membrane generation separately.")

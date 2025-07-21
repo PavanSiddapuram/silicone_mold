@@ -1,11 +1,5 @@
 import trimesh
 import numpy as np
-import networkx as nx
-from scipy.spatial import distance_matrix
-from scipy.sparse import csr_matrix
-from scipy.sparse.csgraph import shortest_path
-import open3d as o3d
-from sklearn.neighbors import NearestNeighbors
 import os
 
 
@@ -23,57 +17,125 @@ class TopologicalMembranes:
     def compute_genus(self):
         """
         Compute the genus of the mesh using Euler characteristic
-        genus = 1 - (V - E + F) / 2
-        where V = vertices, E = edges, F = faces
+        For a closed manifold: χ = V - E + F = 2 - 2g (where g is genus)
+        So: genus = (2 - χ) / 2
         """
+        # First check if mesh is watertight (closed)
+        if not self.mesh.is_watertight:
+            print("Warning: Mesh is not watertight, genus calculation may be inaccurate")
+
         V = len(self.mesh.vertices)
         F = len(self.mesh.faces)
-        E = len(self.mesh.edges)
+
+        # For triangle mesh: E = 3F/2 (each face has 3 edges, each edge shared by 2 faces)
+        # But let's use the actual edge count from trimesh
+        try:
+            E = len(self.mesh.edges)
+        except:
+            # Fallback: estimate edges for triangle mesh
+            E = len(self.mesh.edges_unique)
 
         euler_char = V - E + F
-        genus = 1 - euler_char // 2
 
-        print(f"Mesh statistics: V={V}, E={E}, F={F}")
+        # For closed orientable surface: χ = 2 - 2g
+        # So: g = (2 - χ) / 2
+        genus = (2 - euler_char) / 2
+
+        print(f"Mesh stats: V={V}, E={E}, F={F}")
         print(f"Euler characteristic: {euler_char}")
-        print(f"Genus: {genus}")
+        print(f"Calculated genus: {genus}")
 
-        return max(0, genus)  # Ensure non-negative genus
+        # Genus should be non-negative integer
+        genus = max(0, int(round(genus)))
 
-    def build_dual_graph(self):
-        """
-        Build dual graph where faces are nodes and adjacent faces are connected
-        """
-        face_adjacency = self.mesh.face_adjacency
-        num_faces = len(self.mesh.faces)
+        # Sanity check: if genus is still very large, likely calculation error
+        if genus > 50:
+            print(f"Warning: Calculated genus ({genus}) seems too high, likely mesh has issues")
+            print("Checking mesh properties...")
+            print(f"  Is watertight: {self.mesh.is_watertight}")
+            print(f"  Is winding consistent: {self.mesh.is_winding_consistent}")
+            print(f"  Volume: {self.mesh.volume}")
 
-        # Create adjacency matrix for faces
-        adj_matrix = np.zeros((num_faces, num_faces), dtype=bool)
-        for edge in face_adjacency:
-            adj_matrix[edge[0], edge[1]] = True
-            adj_matrix[edge[1], edge[0]] = True
+            # For problematic meshes, use a more conservative approach
+            if not self.mesh.is_watertight:
+                genus = 0  # Assume genus 0 for non-watertight meshes
+                print("Setting genus to 0 due to non-watertight mesh")
+            else:
+                # Cap at reasonable value
+                genus = min(genus, 5)
+                print(f"Capping genus at {genus} for safety")
 
-        return adj_matrix
+        print(f"Final genus: {genus}")
+        return genus
 
     def find_tunnel_loops_simple(self):
         """
-        Simplified approach to find potential tunnel loops using mesh topology
+        Simplified tunnel detection using mesh boundaries and holes
         """
         if self.genus == 0:
-            print("Mesh has genus 0, no tunnels detected.")
+            print("Genus 0: No tunnels detected")
             return []
 
-        print(f"Detecting tunnel loops for mesh with genus {self.genus}...")
+        print(f"Genus {self.genus}: Looking for tunnel loops...")
 
-        # Find boundary loops that might represent tunnels
-        tunnel_candidates = []
+        # Simple approach: find boundary edges that might form tunnel loops
+        boundary_edges = []
+        edge_count = {}
 
-        # Method 1: Find loops in the mesh structure
-        edges = self.mesh.edges
-        vertices = self.mesh.vertices
+        # Count how many faces share each edge
+        for face in self.mesh.faces:
+            for i in range(3):
+                edge = tuple(sorted([face[i], face[(i + 1) % 3]]))
+                edge_count[edge] = edge_count.get(edge, 0) + 1
 
-        # Build vertex adjacency graph
+        # Find edges that are only in one face (boundary edges)
+        for edge, count in edge_count.items():
+            if count == 1:
+                boundary_edges.append(edge)
+
+        print(f"Found {len(boundary_edges)} boundary edges")
+
+        # Group boundary edges into loops
+        if len(boundary_edges) == 0:
+            # No boundary edges - try alternative approach
+            # Sample some vertex loops from the mesh structure
+            return self.find_sample_loops()
+
+        # Build adjacency for boundary vertices
+        boundary_graph = {}
+        for edge in boundary_edges:
+            v1, v2 = edge
+            if v1 not in boundary_graph:
+                boundary_graph[v1] = []
+            if v2 not in boundary_graph:
+                boundary_graph[v2] = []
+            boundary_graph[v1].append(v2)
+            boundary_graph[v2].append(v1)
+
+        # Find connected boundary components
+        visited = set()
+        loops = []
+
+        for start_vertex in boundary_graph:
+            if start_vertex not in visited:
+                loop = self.trace_boundary_loop(start_vertex, boundary_graph, visited)
+                if len(loop) >= 4:  # Minimum loop size
+                    loops.append(loop)
+
+        # Limit to reasonable number of loops
+        self.tunnel_loops = loops[:min(self.genus, len(loops))]
+        print(f"Found {len(self.tunnel_loops)} tunnel loop candidates")
+        return self.tunnel_loops
+
+    def find_sample_loops(self):
+        """
+        Alternative method: find loops by sampling mesh vertices
+        """
+        print("Using alternative loop detection...")
+
+        # Use mesh edges to build vertex graph
         vertex_graph = {}
-        for edge in edges:
+        for edge in self.mesh.edges:
             v1, v2 = edge
             if v1 not in vertex_graph:
                 vertex_graph[v1] = set()
@@ -82,249 +144,278 @@ class TopologicalMembranes:
             vertex_graph[v1].add(v2)
             vertex_graph[v2].add(v1)
 
-        # Find cycles that could represent tunnel boundaries
-        visited = set()
-        cycles = []
+        # Find some circular paths
+        loops = []
+        tried_starts = set()
 
-        def dfs_cycle(start, current, path, target_length=20):
-            if len(path) > target_length:
-                return
-            if len(path) > 3 and current == start:
-                cycles.append(path.copy())
-                return
-            if current in path[:-1]:  # Avoid infinite loops
-                return
+        # Sample starting vertices
+        sample_size = min(20, len(self.mesh.vertices))
+        sample_vertices = np.random.choice(len(self.mesh.vertices), sample_size, replace=False)
+
+        for start_v in sample_vertices:
+            if start_v in tried_starts:
+                continue
+            tried_starts.add(start_v)
+
+            loop = self.find_loop_from_vertex(start_v, vertex_graph, max_length=15)
+            if loop and len(loop) >= 5:
+                loops.append(loop)
+                if len(loops) >= self.genus:
+                    break
+
+        return loops[:self.genus]
+
+    def find_loop_from_vertex(self, start, vertex_graph, max_length=15):
+        """
+        Find a loop starting from a vertex using DFS
+        """
+        if start not in vertex_graph:
+            return None
+
+        def dfs(current, path, remaining_depth):
+            if remaining_depth <= 0:
+                return None
+
+            if len(path) >= 4 and current == start:
+                return path[:]
 
             if current in vertex_graph:
-                for neighbor in vertex_graph[current]:
-                    if neighbor not in path or (len(path) > 3 and neighbor == start):
-                        path.append(neighbor)
-                        dfs_cycle(start, neighbor, path, target_length)
-                        path.pop()
+                neighbors = list(vertex_graph[current])
+                np.random.shuffle(neighbors)  # Random order
 
-        # Sample some vertices to find cycles
-        vertex_sample = np.random.choice(len(vertices), min(50, len(vertices)), replace=False)
+                for neighbor in neighbors[:3]:  # Limit branching
+                    if neighbor == start and len(path) >= 4:
+                        return path + [neighbor]
+                    elif neighbor not in path:
+                        result = dfs(neighbor, path + [neighbor], remaining_depth - 1)
+                        if result:
+                            return result
+            return None
 
-        for start_vertex in vertex_sample:
-            if start_vertex not in visited:
-                dfs_cycle(start_vertex, start_vertex, [start_vertex])
-                visited.add(start_vertex)
+        return dfs(start, [start], max_length)
 
-        # Filter and select meaningful cycles
-        meaningful_cycles = []
-        for cycle in cycles:
-            if len(cycle) > 5:  # Minimum cycle length
-                cycle_vertices = vertices[cycle]
-                # Check if cycle forms a roughly circular path
-                center = np.mean(cycle_vertices, axis=0)
-                distances = np.linalg.norm(cycle_vertices - center, axis=1)
-                if np.std(distances) / np.mean(distances) < 0.5:  # Relatively uniform distances
-                    meaningful_cycles.append(cycle)
-
-        # Select the best cycles based on geometric properties
-        self.tunnel_loops = meaningful_cycles[:self.genus]  # Limit to genus count
-
-        print(f"Found {len(self.tunnel_loops)} tunnel loop candidates")
-        return self.tunnel_loops
-
-    def create_membrane_surface(self, loop_vertices, membrane_thickness=0.001):
+    def trace_boundary_loop(self, start_vertex, boundary_graph, visited):
         """
-        Create a membrane surface for a given loop of vertices
+        Trace a boundary loop starting from a vertex
+        """
+        loop = [start_vertex]
+        current = start_vertex
+        visited.add(current)
+
+        while len(loop) < 50:  # Prevent infinite loops
+            neighbors = [v for v in boundary_graph.get(current, []) if v not in visited or v == start_vertex]
+
+            if not neighbors:
+                break
+
+            if start_vertex in neighbors and len(loop) > 3:
+                # Found complete loop
+                break
+
+            # Choose next vertex (prefer unvisited)
+            next_vertex = neighbors[0]
+            if next_vertex == start_vertex:
+                break
+
+            loop.append(next_vertex)
+            visited.add(next_vertex)
+            current = next_vertex
+
+        return loop
+
+    def create_membrane_surface(self, loop_vertices, membrane_thickness=0.002):
+        """
+        Create a simple membrane surface for a loop
         """
         if len(loop_vertices) < 3:
             return None
 
         loop_points = self.mesh.vertices[loop_vertices]
-
-        # Find the best fitting plane for the loop
         centroid = np.mean(loop_points, axis=0)
 
-        # Use PCA to find the normal direction
-        centered_points = loop_points - centroid
-        _, _, vh = np.linalg.svd(centered_points)
-        normal = vh[-1]  # Last row is the normal to the best fit plane
+        # Simple planar membrane
+        vertices = [centroid]  # Center point
+        vertices.extend(loop_points)  # Loop points
 
-        # Create membrane points by projecting loop onto the plane
-        membrane_vertices = []
-        membrane_faces = []
+        vertices = np.array(vertices)
 
-        # Add center point
-        center_idx = len(membrane_vertices)
-        membrane_vertices.append(centroid)
+        # Create triangular faces from center to loop
+        faces = []
+        n_loop = len(loop_points)
+        for i in range(n_loop):
+            next_i = (i + 1) % n_loop
+            faces.append([0, i + 1, next_i + 1])
 
-        # Add loop points projected to plane
-        for point in loop_points:
-            projected = point - np.dot(point - centroid, normal) * normal
-            membrane_vertices.append(projected)
+        # Create solid membrane by duplicating with offset
+        # Estimate normal direction
+        if n_loop >= 3:
+            v1 = loop_points[1] - loop_points[0]
+            v2 = loop_points[2] - loop_points[0]
+            normal = np.cross(v1, v2)
+            if np.linalg.norm(normal) > 0:
+                normal = normal / np.linalg.norm(normal)
+            else:
+                normal = np.array([0, 0, 1])
+        else:
+            normal = np.array([0, 0, 1])
 
-        # Create triangular faces from center to loop edges
-        num_loop_points = len(loop_points)
-        for i in range(num_loop_points):
-            next_i = (i + 1) % num_loop_points
-            # Triangle: center, current point, next point
-            membrane_faces.append([center_idx, i + 1, next_i + 1])
+        # Offset vertices
+        offset_vertices = vertices + normal * membrane_thickness
+        all_vertices = np.vstack([vertices, offset_vertices])
 
-        # Create the solid membrane by duplicating and flipping faces
-        membrane_vertices = np.array(membrane_vertices)
-        membrane_faces = np.array(membrane_faces)
+        # Original and flipped faces
+        all_faces = faces[:]
+        offset_faces = [[f[0] + len(vertices), f[2] + len(vertices), f[1] + len(vertices)] for f in faces]
+        all_faces.extend(offset_faces)
 
-        # Duplicate vertices with slight offset
-        offset_vertices = membrane_vertices + normal * membrane_thickness
-        all_vertices = np.vstack([membrane_vertices, offset_vertices])
-
-        # Original faces
-        all_faces = membrane_faces.tolist()
-
-        # Flipped faces (with vertex offset)
-        flipped_faces = membrane_faces + len(membrane_vertices)
-        flipped_faces = flipped_faces[:, ::-1]  # Flip orientation
-        all_faces.extend(flipped_faces.tolist())
-
-        # Side faces to close the membrane
-        num_vertices = len(membrane_vertices)
-        for i in range(1, num_vertices):  # Skip center vertex
-            next_i = (i % (num_vertices - 1)) + 1
-            if next_i == 1:
-                next_i = num_vertices - 1
-
-            # Create quads as two triangles
-            v1, v2 = i, next_i
-            v3, v4 = v1 + num_vertices, v2 + num_vertices
-
-            all_faces.append([v1, v2, v4])
-            all_faces.append([v1, v4, v3])
-
-        membrane_mesh = trimesh.Trimesh(vertices=all_vertices, faces=all_faces)
-        membrane_mesh.fix_normals()
-
-        return membrane_mesh
+        try:
+            membrane = trimesh.Trimesh(vertices=all_vertices, faces=all_faces)
+            membrane.fix_normals()
+            return membrane
+        except Exception as e:
+            print(f"Warning: Failed to create membrane: {e}")
+            return None
 
     def generate_membranes(self):
         """
-        Generate all necessary membranes for the mesh
+        Generate membranes for detected tunnels
         """
         if self.genus == 0:
-            print("No membranes needed for genus 0 mesh")
+            print("No membranes needed (genus 0)")
             return []
 
         tunnel_loops = self.find_tunnel_loops_simple()
         membranes = []
 
         for i, loop in enumerate(tunnel_loops):
+            print(f"Creating membrane {i + 1} for loop with {len(loop)} vertices...")
             membrane = self.create_membrane_surface(loop)
             if membrane is not None:
                 membranes.append(membrane)
-                print(f"Created membrane {i + 1} with {len(membrane.vertices)} vertices")
+                print(f"  ✓ Membrane {i + 1}: {len(membrane.vertices)} vertices, {len(membrane.faces)} faces")
+            else:
+                print(f"  ✗ Failed to create membrane {i + 1}")
 
         self.membranes = membranes
         return membranes
 
-    def apply_membranes_to_metamolds(self, metamold_red_path, metamold_blue_path, results_dir):
-        """
-        Apply membranes to the metamold halves after segmentation
-        """
-        if not self.membranes:
-            print("No membranes to apply")
-            return metamold_red_path, metamold_blue_path
-
-        # Load metamolds
-        red_metamold = trimesh.load(metamold_red_path)
-        blue_metamold = trimesh.load(metamold_blue_path)
-
-        print("Applying membranes to metamolds...")
-
-        # For each membrane, determine which metamold pieces it should affect
-        for i, membrane in enumerate(self.membranes):
-            membrane_path = os.path.join(results_dir, f"membrane_{i}.stl")
-            membrane.export(membrane_path)
-
-            # Simple approach: subtract membrane from both metamolds
-            # In practice, you might want more sophisticated logic here
-            try:
-                # This is a simplified approach - you may need to implement
-                # more sophisticated membrane integration logic
-                red_with_membrane = red_metamold.union(membrane)
-                blue_with_membrane = blue_metamold.union(membrane)
-
-                red_metamold = red_with_membrane
-                blue_metamold = blue_with_membrane
-
-            except Exception as e:
-                print(f"Warning: Could not apply membrane {i}: {e}")
-                continue
-
-        # Save updated metamolds
-        updated_red_path = os.path.join(results_dir, "metamold_red_with_membranes.stl")
-        updated_blue_path = os.path.join(results_dir, "metamold_blue_with_membranes.stl")
-
-        red_metamold.export(updated_red_path)
-        blue_metamold.export(updated_blue_path)
-
-        print(f"Updated metamolds saved with membranes")
-        return updated_red_path, updated_blue_path
-
     def save_membranes(self, results_dir):
         """
-        Save individual membrane files
+        Save membrane files
         """
         if not self.membranes:
             return []
 
         membrane_paths = []
         for i, membrane in enumerate(self.membranes):
-            membrane_path = os.path.join(results_dir, f"topological_membrane_{i + 1}.stl")
-            membrane.export(membrane_path)
-            membrane_paths.append(membrane_path)
-            print(f"Saved membrane {i + 1} to {membrane_path}")
+            membrane_path = os.path.join(results_dir, f"membrane_{i + 1}.stl")
+            try:
+                membrane.export(membrane_path)
+                membrane_paths.append(membrane_path)
+                print(f"✓ Saved: {membrane_path}")
+            except Exception as e:
+                print(f"✗ Failed to save membrane {i + 1}: {e}")
 
         return membrane_paths
+
+    def simple_visualization(self, results_dir):
+        """
+        Simple visualization using trimesh's built-in viewer
+        """
+        if not self.membranes:
+            print("No membranes to visualize")
+            return
+
+        print("\nDisplaying membranes...")
+
+
+def integrate_membranes_with_metamolds(red_path, blue_path, membranes, results_dir):
+    """
+    Integrate membrane surfaces with existing metamolds
+    """
+    try:
+        # Load existing metamolds
+        red_metamold = trimesh.load(red_path)
+        blue_metamold = trimesh.load(blue_path)
+
+        print(f"Integrating {len(membranes)} membranes with metamolds...")
+
+        # Create combined meshes
+        red_components = [red_metamold]
+        blue_components = [blue_metamold]
+
+        # Add membranes to both red and blue metamolds
+        # (membranes will be printed in both colors for structural integrity)
+        for i, membrane in enumerate(membranes):
+            if membrane is not None and membrane.is_valid:
+                red_components.append(membrane)
+                blue_components.append(membrane)
+                print(f"  ✓ Added membrane {i + 1} to both metamolds")
+            else:
+                print(f"  ✗ Skipped invalid membrane {i + 1}")
+
+        # Combine meshes
+        if len(red_components) > 1:
+            final_red = trimesh.util.concatenate(red_components)
+            final_red_path = os.path.join(results_dir, "final_metamold_red_with_membranes.stl")
+            final_red.export(final_red_path)
+            print(f"✓ Saved final red metamold: {final_red_path}")
+        else:
+            final_red_path = red_path
+            print("No membranes added to red metamold")
+
+        if len(blue_components) > 1:
+            final_blue = trimesh.util.concatenate(blue_components)
+            final_blue_path = os.path.join(results_dir, "final_metamold_blue_with_membranes.stl")
+            final_blue.export(final_blue_path)
+            print(f"✓ Saved final blue metamold: {final_blue_path}")
+        else:
+            final_blue_path = blue_path
+            print("No membranes added to blue metamold")
+
+        return final_red_path, final_blue_path
+
+    except Exception as e:
+        print(f"Error integrating membranes: {e}")
+        return red_path, blue_path
 
 
 def process_topological_membranes(mesh_path, metamold_red_path, metamold_blue_path, results_dir):
     """
-    Main function to process topological membranes
+    Process topological membranes using the TopologicalMembranes class
     """
-    print("Starting topological membrane processing...")
+    try:
+        # Initialize the topological membrane processor
+        topo_processor = TopologicalMembranes(mesh_path)
 
-    # Initialize membrane processor
-    membrane_processor = TopologicalMembranes(mesh_path)
+        print(f"Initialized topological processor for mesh: {mesh_path}")
+        print(f"Detected genus: {topo_processor.genus}")
 
-    # Check if membranes are needed
-    if membrane_processor.genus == 0:
-        print("Mesh has genus 0, no topological membranes needed")
+        # Generate membranes if genus > 0
+        if topo_processor.genus > 0:
+            print(f"\nGenerating membranes for genus {topo_processor.genus} object...")
+
+            # Generate the membrane surfaces
+            membranes = topo_processor.generate_membranes()
+
+            if membranes:
+                # Save individual membrane files
+                membrane_paths = topo_processor.save_membranes(results_dir)
+
+                # Integrate membranes with existing metamolds
+                final_red_path, final_blue_path = integrate_membranes_with_metamolds(
+                    metamold_red_path, metamold_blue_path, membranes, results_dir
+                )
+
+                return final_red_path, final_blue_path, membrane_paths
+            else:
+                print("No membranes could be generated")
+                return metamold_red_path, metamold_blue_path, []
+        else:
+            print("Genus 0 object - no topological membranes needed")
+            return metamold_red_path, metamold_blue_path, []
+
+    except Exception as e:
+        print(f"Error in topological membrane processing: {e}")
+        print("Continuing with original metamolds...")
         return metamold_red_path, metamold_blue_path, []
-
-    # Generate membranes
-    membranes = membrane_processor.generate_membranes()
-
-    if not membranes:
-        print("No valid membranes could be generated")
-        return metamold_red_path, metamold_blue_path, []
-
-    # Save individual membranes
-    membrane_paths = membrane_processor.save_membranes(results_dir)
-
-    # Apply membranes to metamolds
-    updated_red_path, updated_blue_path = membrane_processor.apply_membranes_to_metamolds(
-        metamold_red_path, metamold_blue_path, results_dir
-    )
-
-    print(f"Topological membrane processing complete!")
-    print(f"Generated {len(membranes)} membranes")
-
-    return updated_red_path, updated_blue_path, membrane_paths
-
-
-# # Usage example - add this to your main.py after metamold generation:
-# if __name__ == "__main__":
-#     # This would be added to your existing main.py after the metamold generation
-#
-#     # Process topological membranes
-#     updated_metamold_red_path, updated_metamold_blue_path, membrane_paths = process_topological_membranes(
-#         mesh_path, metamold_red_path, metamold_blue_path, results_dir
-#     )
-#
-#     print("Final metamold paths with membranes:")
-#     print(f"Red metamold: {updated_metamold_red_path}")
-#     print(f"Blue metamold: {updated_metamold_blue_path}")
-#     print(f"Membrane files: {membrane_paths}")

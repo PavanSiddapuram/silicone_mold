@@ -1,0 +1,17 @@
+Topological Analysis Report
+==========================
+
+Original mesh: assets/stl/bunny.stl
+Detected genus: 5
+Number of membranes generated: 5
+
+Membrane files:
+  1. membrane_1.stl
+  2. membrane_2.stl
+  3. membrane_3.stl
+  4. membrane_4.stl
+  5. membrane_5.stl
+
+Final metamold files:
+  Red: metamold_red.stl
+  Blue: metamold_blue.stl

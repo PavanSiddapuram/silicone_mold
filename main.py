@@ -16,6 +16,7 @@ from src.generate_metamold import generate_metamold_blue
 from src.generate_metamold import validate_metamold_files
 
 from src.topological_membranes import process_topological_membranes
+from src.topological_membranes import TopologicalMembranes
 
 import time
 import sys
@@ -149,6 +150,7 @@ print(f"Blue metamold saved to: {metamold_blue_path}")
 
 """ GENERATE TOPOLOGICAL MEMBRANES FOR OBJECTS WITH GENUS > 0 """
 
+# Main topological processing section
 print("\nProcessing topological membranes...")
 
 # Process topological membranes and update metamolds
@@ -160,15 +162,37 @@ if membrane_paths:
     print(f"\nTopological membranes generated successfully!")
     print(f"Number of membranes created: {len(membrane_paths)}")
     for i, path in enumerate(membrane_paths):
-        print(f"  Membrane {i+1}: {path}")
+        print(f"  Membrane {i + 1}: {path}")
 
-    print(f"\nFinal metamold files (with membranes):")
+    print(f"\nFinal metamold files (with integrated membranes):")
     print(f"  Red metamold: {final_metamold_red_path}")
     print(f"  Blue metamold: {final_metamold_blue_path}")
+
+    # Optional: Display topology information
+    topo_info_path = os.path.join(results_dir, "topology_report.txt")
+    with open(topo_info_path, 'w') as f:
+        f.write(f"Topological Analysis Report\n")
+        f.write(f"==========================\n\n")
+        f.write(f"Original mesh: {mesh_path}\n")
+        f.write(f"Detected genus: {TopologicalMembranes(mesh_path).genus}\n")
+        f.write(f"Number of membranes generated: {len(membrane_paths)}\n\n")
+        f.write(f"Membrane files:\n")
+        for i, path in enumerate(membrane_paths):
+            f.write(f"  {i + 1}. {os.path.basename(path)}\n")
+        f.write(f"\nFinal metamold files:\n")
+        f.write(f"  Red: {os.path.basename(final_metamold_red_path)}\n")
+        f.write(f"  Blue: {os.path.basename(final_metamold_blue_path)}\n")
+
+    print(f"✓ Topology report saved: {topo_info_path}")
+
 else:
     print("No topological membranes were needed or could be generated.")
     final_metamold_red_path = metamold_red_path
     final_metamold_blue_path = metamold_blue_path
 
-print(f"\nPipeline completed successfully!")
-print(f"All output files saved in: {results_dir}")
+print(f"\nTopological processing completed!")
+print(f"Final output files:")
+print(f"  Red metamold: {final_metamold_red_path}")
+print(f"  Blue metamold: {final_metamold_blue_path}")
+if membrane_paths:
+    print(f"  Individual membranes: {len(membrane_paths)} files")

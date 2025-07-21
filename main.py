@@ -15,6 +15,8 @@ from src.generate_metamold import generate_metamold_red
 from src.generate_metamold import generate_metamold_blue
 from src.generate_metamold import validate_metamold_files
 
+from src.topological_membranes import process_topological_membranes
+
 import time
 import sys
 import os
@@ -145,37 +147,28 @@ print("Metamold generation completed successfully!")
 print(f"Red metamold saved to: {metamold_red_path}")
 print(f"Blue metamold saved to: {metamold_blue_path}")
 
-""" COMPUTE THE SECONDARY (ADDITIONAL) MEMBRANES """
+""" GENERATE TOPOLOGICAL MEMBRANES FOR OBJECTS WITH GENUS > 0 """
 
-print("\n" + "=" * 50)
-print("GENERATING SECONDARY MEMBRANES")
-print("=" * 50)
+print("\nProcessing topological membranes...")
 
-# Import the secondary membrane generator
-from src.secondary_membranes import generate_secondary_membranes
+# Process topological membranes and update metamolds
+final_metamold_red_path, final_metamold_blue_path, membrane_paths = process_topological_membranes(
+    mesh_path, metamold_red_path, metamold_blue_path, results_dir
+)
 
-start_membrane_time = time.time()
+if membrane_paths:
+    print(f"\nTopological membranes generated successfully!")
+    print(f"Number of membranes created: {len(membrane_paths)}")
+    for i, path in enumerate(membrane_paths):
+        print(f"  Membrane {i+1}: {path}")
 
-# Generate secondary membranes for both metamold halves
-try:
-    red_membranes, blue_membranes = generate_secondary_membranes(
-        results_dir, draw_direction, mesh_path
-    )
+    print(f"\nFinal metamold files (with membranes):")
+    print(f"  Red metamold: {final_metamold_red_path}")
+    print(f"  Blue metamold: {final_metamold_blue_path}")
+else:
+    print("No topological membranes were needed or could be generated.")
+    final_metamold_red_path = metamold_red_path
+    final_metamold_blue_path = metamold_blue_path
 
-    end_membrane_time = time.time()
-    print(f"Membrane generation time: {end_membrane_time - start_membrane_time:.2f} seconds")
-
-    # Print summary
-    print("\nSUMMARY:")
-    print(f"- Generated {len(red_membranes)} secondary membranes for red metamold")
-    print(f"- Generated {len(blue_membranes)} secondary membranes for blue metamold")
-    print(f"- Total processing time: {end_membrane_time - start_time:.2f} seconds")
-
-    print("\nFiles saved in:", results_dir)
-    print("- Metamold halves: metamold_red.stl, metamold_blue.stl")
-    print("- Secondary membranes: red_membrane_*.stl, blue_membrane_*.stl")
-
-except Exception as e:
-    print(f"Error generating secondary membranes: {e}")
-    print("Metamold generation was successful, but secondary membrane generation failed.")
-    print("Check the metamold files and try running the secondary membrane generation separately.")
+print(f"\nPipeline completed successfully!")
+print(f"All output files saved in: {results_dir}")

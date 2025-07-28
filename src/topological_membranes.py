@@ -299,123 +299,78 @@ class TopologicalMembranes:
         self.membranes = membranes
         return membranes
 
-    def save_membranes(self, results_dir):
-        """
-        Save membrane files
-        """
-        if not self.membranes:
-            return []
 
-        membrane_paths = []
-        for i, membrane in enumerate(self.membranes):
-            membrane_path = os.path.join(results_dir, f"membrane_{i + 1}.stl")
-            try:
-                membrane.export(membrane_path)
-                membrane_paths.append(membrane_path)
-                print(f"✓ Saved: {membrane_path}")
-            except Exception as e:
-                print(f"✗ Failed to save membrane {i + 1}: {e}")
-
-        return membrane_paths
-
-    def simple_visualization(self, results_dir):
-        """
-        Simple visualization using trimesh's built-in viewer
-        """
-        if not self.membranes:
-            print("No membranes to visualize")
-            return
-
-        print("\nDisplaying membranes...")
-
-
-def integrate_membranes_with_metamolds(red_path, blue_path, membranes, results_dir):
+def process_single_metamold_membranes(metamold_path, metamold_name, results_dir):
     """
-    Integrate membrane surfaces with existing metamolds
+    Process topological membranes for a single metamold
     """
+    print(f"\n--- Processing {metamold_name} metamold ---")
+    print(f"Analyzing: {metamold_path}")
+
     try:
-        # Load existing metamolds
-        red_metamold = trimesh.load(red_path)
-        blue_metamold = trimesh.load(blue_path)
+        # Initialize processor for this specific metamold
+        topo_processor = TopologicalMembranes(metamold_path)
 
-        print(f"Integrating {len(membranes)} membranes with metamolds...")
+        print(f"Detected genus for {metamold_name}: {topo_processor.genus}")
 
-        # Create combined meshes
-        red_components = [red_metamold]
-        blue_components = [blue_metamold]
-
-        # Add membranes to both red and blue metamolds
-        # (membranes will be printed in both colors for structural integrity)
-        for i, membrane in enumerate(membranes):
-            if membrane is not None and membrane.is_valid:
-                red_components.append(membrane)
-                blue_components.append(membrane)
-                print(f"  ✓ Added membrane {i + 1} to both metamolds")
-            else:
-                print(f"  ✗ Skipped invalid membrane {i + 1}")
-
-        # Combine meshes
-        if len(red_components) > 1:
-            final_red = trimesh.util.concatenate(red_components)
-            final_red_path = os.path.join(results_dir, "final_metamold_red_with_membranes.stl")
-            final_red.export(final_red_path)
-            print(f"✓ Saved final red metamold: {final_red_path}")
-        else:
-            final_red_path = red_path
-            print("No membranes added to red metamold")
-
-        if len(blue_components) > 1:
-            final_blue = trimesh.util.concatenate(blue_components)
-            final_blue_path = os.path.join(results_dir, "final_metamold_blue_with_membranes.stl")
-            final_blue.export(final_blue_path)
-            print(f"✓ Saved final blue metamold: {final_blue_path}")
-        else:
-            final_blue_path = blue_path
-            print("No membranes added to blue metamold")
-
-        return final_red_path, final_blue_path
-
-    except Exception as e:
-        print(f"Error integrating membranes: {e}")
-        return red_path, blue_path
-
-
-def process_topological_membranes(mesh_path, metamold_red_path, metamold_blue_path, results_dir):
-    """
-    Process topological membranes using the TopologicalMembranes class
-    """
-    try:
-        # Initialize the topological membrane processor
-        topo_processor = TopologicalMembranes(mesh_path)
-
-        print(f"Initialized topological processor for mesh: {mesh_path}")
-        print(f"Detected genus: {topo_processor.genus}")
-
-        # Generate membranes if genus > 0
         if topo_processor.genus > 0:
-            print(f"\nGenerating membranes for genus {topo_processor.genus} object...")
+            print(f"Generating membranes for {metamold_name} (genus {topo_processor.genus})...")
 
-            # Generate the membrane surfaces
+            # Generate membranes specific to this metamold
             membranes = topo_processor.generate_membranes()
 
             if membranes:
-                # Save individual membrane files
-                membrane_paths = topo_processor.save_membranes(results_dir)
+                # Load the original metamold
+                original_metamold = trimesh.load(metamold_path)
 
-                # Integrate membranes with existing metamolds
-                final_red_path, final_blue_path = integrate_membranes_with_metamolds(
-                    metamold_red_path, metamold_blue_path, membranes, results_dir
-                )
+                # Combine with membranes
+                components = [original_metamold]
+                membranes_added = 0
 
-                return final_red_path, final_blue_path, membrane_paths
+                for i, membrane in enumerate(membranes):
+                    if membrane is not None and membrane.is_valid:
+                        components.append(membrane)
+                        membranes_added += 1
+                        print(f"  ✓ Added membrane {i + 1} to {metamold_name}")
+                    else:
+                        print(f"  ✗ Skipped invalid membrane {i + 1} for {metamold_name}")
+
+                if membranes_added > 0:
+                    # Combine and save
+                    final_metamold = trimesh.util.concatenate(components)
+                    output_path = os.path.join(results_dir, f"final_metamold_{metamold_name}_with_membranes.stl")
+                    final_metamold.export(output_path)
+                    print(f"✓ Saved {metamold_name} with {membranes_added} membranes: {output_path}")
+                    return output_path, membranes_added, topo_processor.genus
+                else:
+                    print(f"No membranes added to {metamold_name}")
+                    return metamold_path, 0, topo_processor.genus
             else:
-                print("No membranes could be generated")
-                return metamold_red_path, metamold_blue_path, []
+                print(f"No membranes generated for {metamold_name}")
+                return metamold_path, 0, topo_processor.genus
         else:
-            print("Genus 0 object - no topological membranes needed")
-            return metamold_red_path, metamold_blue_path, []
+            print(f"{metamold_name} is genus 0 - no membranes needed")
+            return metamold_path, 0, 0
 
     except Exception as e:
-        print(f"Error in topological membrane processing: {e}")
-        print("Continuing with original metamolds...")
-        return metamold_red_path, metamold_blue_path, []
+        print(f"Error processing {metamold_name}: {e}")
+        return metamold_path, 0, 0
+
+
+def process_topological_membranes_per_metamold(metamold_red_path, metamold_blue_path, results_dir):
+    """
+    Process topological membranes for each metamold individually
+    """
+    print("Processing topological membranes per metamold...")
+
+    # Process red metamold
+    final_red_path, red_membranes, red_genus = process_single_metamold_membranes(
+        metamold_red_path, "red", results_dir
+    )
+
+    # Process blue metamold
+    final_blue_path, blue_membranes, blue_genus = process_single_metamold_membranes(
+        metamold_blue_path, "blue", results_dir
+    )
+
+    return final_red_path, final_blue_path, red_membranes, blue_membranes, red_genus, blue_genus

@@ -14,6 +14,7 @@ from src.ruledSurface import ruledSurface
 from src.generate_metamold import generate_metamold_red
 from src.generate_metamold import generate_metamold_blue
 from src.generate_metamold import validate_metamold_files
+from src.clean_mesh import repair_and_wrap_mesh
 
 from src.topological_membranes import TopologicalMembranes
 
@@ -147,148 +148,12 @@ print("Metamold generation completed successfully!")
 print(f"Red metamold saved to: {metamold_red_path}")
 print(f"Blue metamold saved to: {metamold_blue_path}")
 
-# ! NEW TOPOLOGICAL MEMBRANES CODE
+""" REPAIR THE METAMOLD MESHES """
 
-""" TOPOLOGICAL MEMBRANE PROCESSING FUNCTIONS """
-
-def process_single_metamold_membranes(metamold_path, metamold_name, results_dir):
-    """
-    Process topological membranes for a single metamold
-    """
-    print(f"\n--- Processing {metamold_name} metamold ---")
-    print(f"Analyzing: {metamold_path}")
-
-    try:
-        # Initialize processor for this specific metamold
-        topo_processor = TopologicalMembranes(metamold_path)
-
-        print(f"Detected genus for {metamold_name}: {topo_processor.genus}")
-
-        if topo_processor.genus > 0:
-            print(f"Generating membranes for {metamold_name} (genus {topo_processor.genus})...")
-
-            # Generate membranes specific to this metamold
-            membranes = topo_processor.generate_membranes()
-
-            if membranes:
-                # Load the original metamold
-                original_metamold = trimesh.load(metamold_path)
-
-                # Combine with membranes
-                components = [original_metamold]
-                membranes_added = 0
-
-                for i, membrane in enumerate(membranes):
-                    if membrane is not None and membrane.is_valid:
-                        components.append(membrane)
-                        membranes_added += 1
-                        print(f"  ✓ Added membrane {i + 1} to {metamold_name}")
-                    else:
-                        print(f"  ✗ Skipped invalid membrane {i + 1} for {metamold_name}")
-
-                if membranes_added > 0:
-                    # Combine and save
-                    final_metamold = trimesh.util.concatenate(components)
-                    output_path = os.path.join(results_dir, f"final_metamold_{metamold_name}_with_membranes.stl")
-                    final_metamold.export(output_path)
-                    print(f"✓ Saved {metamold_name} with {membranes_added} membranes: {output_path}")
-                    return output_path, membranes_added, topo_processor.genus
-                else:
-                    print(f"No membranes added to {metamold_name}")
-                    return metamold_path, 0, topo_processor.genus
-            else:
-                print(f"No membranes generated for {metamold_name}")
-                return metamold_path, 0, topo_processor.genus
-        else:
-            print(f"{metamold_name} is genus 0 - no membranes needed")
-            return metamold_path, 0, 0
-
-    except Exception as e:
-        print(f"Error processing {metamold_name}: {e}")
-        return metamold_path, 0, 0
-
-
-def process_topological_membranes_per_metamold(metamold_red_path, metamold_blue_path, results_dir):
-    """
-    Process topological membranes for each metamold individually
-    """
-    print("Processing topological membranes per metamold...")
-
-    # Process red metamold
-    final_red_path, red_membranes, red_genus = process_single_metamold_membranes(
-        metamold_red_path, "red", results_dir
-    )
-
-    # Process blue metamold
-    final_blue_path, blue_membranes, blue_genus = process_single_metamold_membranes(
-        metamold_blue_path, "blue", results_dir
-    )
-
-    return final_red_path, final_blue_path, red_membranes, blue_membranes, red_genus, blue_genus
-
-
-""" GENERATE TOPOLOGICAL MEMBRANES FOR OBJECTS WITH GENUS > 0 """
-
-# Main topological processing section
-print("\nProcessing topological membranes per metamold...")
-
-# Process each metamold individually
-final_red_path, final_blue_path, red_membranes_count, blue_membranes_count, red_genus, blue_genus = process_topological_membranes_per_metamold(
-    metamold_red_path, metamold_blue_path, results_dir
+repair_and_wrap_mesh(
+    metamold_red_path, output_path=os.path.join(results_dir, "metamold_red_wrapped.stl")
 )
 
-# Summary
-print(f"\n=== TOPOLOGICAL PROCESSING SUMMARY ===")
-print(f"Red metamold:")
-print(f"  Genus: {red_genus}")
-print(f"  Membranes added: {red_membranes_count}")
-print(f"  Final file: {final_red_path}")
-
-print(f"\nBlue metamold:")
-print(f"  Genus: {blue_genus}")
-print(f"  Membranes added: {blue_membranes_count}")
-print(f"  Final file: {final_blue_path}")
-
-total_membranes = red_membranes_count + blue_membranes_count
-if total_membranes > 0:
-    print(f"\nTotal membranes integrated: {total_membranes}")
-
-    # Generate detailed topology report
-    topo_info_path = os.path.join(results_dir, "topology_report_per_metamold.txt")
-    with open(topo_info_path, 'w') as f:
-        f.write(f"Per-Metamold Topological Analysis Report\n")
-        f.write(f"========================================\n\n")
-        f.write(f"RED METAMOLD ANALYSIS:\n")
-        f.write(f"  Original file: {metamold_red_path}\n")
-        f.write(f"  Detected genus: {red_genus}\n")
-        f.write(f"  Membranes integrated: {red_membranes_count}\n")
-        f.write(f"  Final file: {os.path.basename(final_red_path)}\n\n")
-
-        f.write(f"BLUE METAMOLD ANALYSIS:\n")
-        f.write(f"  Original file: {metamold_blue_path}\n")
-        f.write(f"  Detected genus: {blue_genus}\n")
-        f.write(f"  Membranes integrated: {blue_membranes_count}\n")
-        f.write(f"  Final file: {os.path.basename(final_blue_path)}\n\n")
-
-        f.write(f"SUMMARY:\n")
-        f.write(f"  Total membranes: {total_membranes}\n")
-        f.write(f"  Processing method: Individual analysis per metamold\n")
-        f.write(f"  Each metamold analyzed separately for topology\n")
-
-    print(f"✓ Detailed topology report saved: {topo_info_path}")
-else:
-    print("\nNo topological membranes were needed for either metamold.")
-
-print(f"\nPer-metamold topological processing completed!")
-print(f"Final output files:")
-print(f"  Red metamold: {final_red_path}")
-print(f"  Blue metamold: {final_blue_path}")
-
-# Update the final metamold paths for any downstream processing
-final_metamold_red_path = final_red_path
-final_metamold_blue_path = final_blue_path
-
-print(f"\nAll processing completed successfully!")
-print(f"Final metamold files ready for 3D printing:")
-print(f"  Red metamold: {final_metamold_red_path}")
-print(f"  Blue metamold: {final_metamold_blue_path}")
+repair_and_wrap_mesh(
+    metamold_blue_path, output_path=os.path.join(results_dir, "metamold_blue_wrapped.stl")
+)

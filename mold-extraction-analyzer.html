@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STL Mold Extraction Analyzer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 30px;
+            transition: all 0.3s ease;
+        }
+
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: rgba(102, 126, 234, 0.05);
+        }
+
+        .upload-area.dragover {
+            border-color: #764ba2;
+            background: rgba(102, 126, 234, 0.1);
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .upload-btn {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: transform 0.3s ease;
+        }
+
+        .upload-btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .control-group {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        .control-group h3 {
+            margin-top: 0;
+            color: #333;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+
+        input[type="range"], input[type="number"], select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+
+        .analyze-btn {
+            background: linear-gradient(45deg, #28a745, #20c997);
+            color: white;
+            padding: 15px 40px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 18px;
+            margin: 20px auto;
+            display: block;
+            transition: transform 0.3s ease;
+        }
+
+        .analyze-btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .viewer-container {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 30px;
+            margin-top: 30px;
+        }
+
+        #viewer {
+            width: 100%;
+            height: 600px;
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            background: #000;
+        }
+
+        .results {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 10px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .results h3 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .issue {
+            background: white;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #dc3545;
+        }
+
+        .issue.warning {
+            border-left-color: #ffc107;
+        }
+
+        .issue.info {
+            border-left-color: #17a2b8;
+        }
+
+        .issue-type {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #333;
+        }
+
+        .issue-details {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .legend {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+            border-radius: 3px;
+        }
+
+        .stats {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏭 STL Mold Extraction Analyzer</h1>
+
+        <div class="upload-area" id="uploadArea">
+            <p style="font-size: 18px; margin-bottom: 20px;">Drop your STL file here or click to upload</p>
+            <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                Choose STL File
+            </button>
+            <input type="file" id="fileInput" accept=".stl" />
+            <p style="margin-top: 15px; color: #666; font-size: 14px;">
+                Supported format: STL (binary or ASCII)
+            </p>
+        </div>
+
+        <div class="controls hidden" id="controls">
+            <div class="control-group">
+                <h3>🎯 Extraction Direction</h3>
+                <label>Draw Direction:</label>
+                <select id="drawDirection">
+                    <option value="z">Z-axis (Up)</option>
+                    <option value="-z">-Z-axis (Down)</option>
+                    <option value="y">Y-axis (Forward)</option>
+                    <option value="-y">-Y-axis (Backward)</option>
+                    <option value="x">X-axis (Right)</option>
+                    <option value="-x">-X-axis (Left)</option>
+                    <option value="auto">Auto-detect Best</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <h3>⚙️ Analysis Settings</h3>
+                <label>Undercut Threshold (degrees):</label>
+                <input type="range" id="undercutThreshold" min="0" max="45" value="15" />
+                <span id="undercutValue">15°</span>
+
+                <label>Small Feature Size (mm):</label>
+                <input type="number" id="smallFeatureSize" value="2" step="0.1" min="0.1" />
+            </div>
+
+            <div class="control-group">
+                <h3>🔍 Detection Sensitivity</h3>
+                <label>Mesh Resolution:</label>
+                <select id="meshResolution">
+                    <option value="low">Low (Fast)</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High (Detailed)</option>
+                </select>
+
+                <label>Analysis Depth:</label>
+                <select id="analysisDepth">
+                    <option value="basic">Basic</option>
+                    <option value="detailed" selected>Detailed</option>
+                    <option value="comprehensive">Comprehensive</option>
+                </select>
+            </div>
+        </div>
+
+        <button class="analyze-btn hidden" id="analyzeBtn">🔍 Analyze Mold Extraction</button>
+
+        <div class="loading hidden" id="loading">
+            <div class="spinner"></div>
+            <p>Analyzing mesh geometry and extraction issues...</p>
+        </div>
+
+        <div class="viewer-container hidden" id="viewerContainer">
+            <div id="viewer"></div>
+
+            <div class="results">
+                <div class="legend">
+                    <h4>Color Legend</h4>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #28a745;"></div>
+                        <span>Safe extraction areas</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #ffc107;"></div>
+                        <span>Minor undercuts (flexible silicone OK)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #fd7e14;"></div>
+                        <span>Major undercuts (need membranes)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #dc3545;"></div>
+                        <span>Closed loops/impossible extraction</span>
+                    </div>
+                </div>
+
+                <div class="stats" id="stats">
+                    <h4>Analysis Summary</h4>
+                    <!-- Stats will be populated here -->
+                </div>
+
+                <h3>🚨 Extraction Issues</h3>
+                <div id="issues">
+                    <!-- Issues will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class STLMoldAnalyzer {
+            constructor() {
+                this.scene = null;
+                this.camera = null;
+                this.renderer = null;
+                this.mesh = null;
+                this.geometry = null;
+                this.issues = [];
+                this.drawDirection = new THREE.Vector3(0, 0, 1);
+
+                this.setupEventListeners();
+            }
+
+            setupEventListeners() {
+                const uploadArea = document.getElementById('uploadArea');
+                const fileInput = document.getElementById('fileInput');
+                const analyzeBtn = document.getElementById('analyzeBtn');
+
+                // Drag and drop
+                uploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.add('dragover');
+                });
+
+                uploadArea.addEventListener('dragleave', () => {
+                    uploadArea.classList.remove('dragover');
+                });
+
+                uploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.remove('dragover');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) this.handleFile(files[0]);
+                });
+
+                fileInput.addEventListener('change', (e) => {
+                    if (e.target.files.length > 0) this.handleFile(e.target.files[0]);
+                });
+
+                analyzeBtn.addEventListener('click', () => this.analyzeMold());
+
+                // Real-time updates for sliders
+                document.getElementById('undercutThreshold').addEventListener('input', (e) => {
+                    document.getElementById('undercutValue').textContent = e.target.value + '°';
+                });
+            }
+
+            async handleFile(file) {
+                if (!file.name.toLowerCase().endsWith('.stl')) {
+                    alert('Please upload an STL file');
+                    return;
+                }
+
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    this.parseSTL(arrayBuffer);
+                    this.setupViewer();
+                    this.showControls();
+                } catch (error) {
+                    console.error('Error loading STL:', error);
+                    alert('Error loading STL file. Please check the file format.');
+                }
+            }
+
+            parseSTL(buffer) {
+                const loader = new THREE.STLLoader();
+                this.geometry = loader.parse(buffer);
+                this.geometry.computeVertexNormals();
+                this.geometry.computeBoundingBox();
+
+                console.log('STL loaded:', {
+                    vertices: this.geometry.attributes.position.count,
+                    faces: this.geometry.attributes.position.count / 3,
+                    boundingBox: this.geometry.boundingBox
+                });
+            }
+
+            setupViewer() {
+                const viewer = document.getElementById('viewer');
+
+                // Scene setup
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color(0x2c3e50);
+
+                // Camera setup
+                const bbox = this.geometry.boundingBox;
+                const size = bbox.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+
+                this.camera = new THREE.PerspectiveCamera(75, viewer.clientWidth / viewer.clientHeight, 0.1, maxDim * 10);
+                this.camera.position.set(maxDim * 1.5, maxDim * 1.5, maxDim * 1.5);
+                this.camera.lookAt(bbox.getCenter(new THREE.Vector3()));
+
+                // Renderer setup
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.renderer.setSize(viewer.clientWidth, viewer.clientHeight);
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                viewer.appendChild(this.renderer.domElement);
+
+                // Lighting
+                const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
+                this.scene.add(ambientLight);
+
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                directionalLight.position.set(maxDim, maxDim, maxDim);
+                directionalLight.castShadow = true;
+                this.scene.add(directionalLight);
+
+                // Add mesh
+                const material = new THREE.MeshLambertMaterial({
+                    color: 0x3498db,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                this.mesh = new THREE.Mesh(this.geometry, material);
+                this.mesh.castShadow = true;
+                this.mesh.receiveShadow = true;
+                this.scene.add(this.mesh);
+
+                // Add coordinate system
+                const axesHelper = new THREE.AxesHelper(maxDim * 0.3);
+                this.scene.add(axesHelper);
+
+                // Mouse controls
+                this.setupMouseControls();
+
+                // Start render loop
+                this.animate();
+            }
+
+            setupMouseControls() {
+                const canvas = this.renderer.domElement;
+                let isMouseDown = false;
+                let mouseX = 0, mouseY = 0;
+
+                canvas.addEventListener('mousedown', (e) => {
+                    isMouseDown = true;
+                    mouseX = e.clientX;
+                    mouseY = e.clientY;
+                });
+
+                canvas.addEventListener('mouseup', () => {
+                    isMouseDown = false;
+                });
+
+                canvas.addEventListener('mousemove', (e) => {
+                    if (!isMouseDown) return;
+
+                    const deltaX = e.clientX - mouseX;
+                    const deltaY = e.clientY - mouseY;
+
+                    const bbox = this.geometry.boundingBox;
+                    const center = bbox.getCenter(new THREE.Vector3());
+
+                    // Rotate camera around the model
+                    const spherical = new THREE.Spherical();
+                    spherical.setFromVector3(this.camera.position.clone().sub(center));
+                    spherical.theta -= deltaX * 0.01;
+                    spherical.phi += deltaY * 0.01;
+                    spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi));
+
+                    this.camera.position.setFromSpherical(spherical).add(center);
+                    this.camera.lookAt(center);
+
+                    mouseX = e.clientX;
+                    mouseY = e.clientY;
+                });
+
+                canvas.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    const bbox = this.geometry.boundingBox;
+                    const center = bbox.getCenter(new THREE.Vector3());
+                    const direction = this.camera.position.clone().sub(center).normalize();
+
+                    const zoomSpeed = 0.1;
+                    this.camera.position.add(direction.multiplyScalar(e.deltaY * zoomSpeed));
+                });
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                this.renderer.render(this.scene, this.camera);
+            }
+
+            showControls() {
+                document.getElementById('controls').classList.remove('hidden');
+                document.getElementById('analyzeBtn').classList.remove('hidden');
+            }
+
+            async analyzeMold() {
+                document.getElementById('loading').classList.remove('hidden');
+                document.getElementById('viewerContainer').classList.add('hidden');
+
+                // Small delay to show loading
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                try {
+                    this.issues = [];
+                    this.setDrawDirection();
+
+                    await this.analyzeGeometry();
+                    this.colorizeByIssues();
+                    this.displayResults();
+
+                    document.getElementById('loading').classList.add('hidden');
+                    document.getElementById('viewerContainer').classList.remove('hidden');
+                } catch (error) {
+                    console.error('Analysis error:', error);
+                    alert('Error during analysis. Please try again.');
+                    document.getElementById('loading').classList.add('hidden');
+                }
+            }
+
+            setDrawDirection() {
+                const direction = document.getElementById('drawDirection').value;
+
+                switch(direction) {
+                    case 'x': this.drawDirection.set(1, 0, 0); break;
+                    case '-x': this.drawDirection.set(-1, 0, 0); break;
+                    case 'y': this.drawDirection.set(0, 1, 0); break;
+                    case '-y': this.drawDirection.set(0, -1, 0); break;
+                    case 'z': this.drawDirection.set(0, 0, 1); break;
+                    case '-z': this.drawDirection.set(0, 0, -1); break;
+                    case 'auto': this.findBestDrawDirection(); break;
+                }
+            }
+
+            findBestDrawDirection() {
+                // Try all 6 directions and pick the one with fewest issues
+                const directions = [
+                    new THREE.Vector3(1, 0, 0),
+                    new THREE.Vector3(-1, 0, 0),
+                    new THREE.Vector3(0, 1, 0),
+                    new THREE.Vector3(0, -1, 0),
+                    new THREE.Vector3(0, 0, 1),
+                    new THREE.Vector3(0, 0, -1)
+                ];
+
+                let bestDirection = directions[4]; // Default to Z
+                let minIssues = Infinity;
+
+                directions.forEach(dir => {
+                    const issueCount = this.countIssuesForDirection(dir);
+                    if (issueCount < minIssues) {
+                        minIssues = issueCount;
+                        bestDirection = dir;
+                    }
+                });
+
+                this.drawDirection = bestDirection;
+            }
+
+            countIssuesForDirection(direction) {
+                // Quick analysis to count potential issues
+                const positions = this.geometry.attributes.position.array;
+                const normals = this.geometry.attributes.normal.array;
+                const threshold = Math.cos(this.getUndercutThreshold() * Math.PI / 180);
+
+                let issueCount = 0;
+
+                for (let i = 0; i < positions.length; i += 9) {
+                    const normal = new THREE.Vector3(normals[i], normals[i+1], normals[i+2]);
+                    const dot = normal.dot(direction);
+
+                    if (dot < -threshold) {
+                        issueCount++;
+                    }
+                }
+
+                return issueCount;
+            }
+
+            async analyzeGeometry() {
+                const positions = this.geometry.attributes.position.array;
+                const normals = this.geometry.attributes.normal.array;
+                const threshold = Math.cos(this.getUndercutThreshold() * Math.PI / 180);
+                const smallFeatureSize = this.getSmallFeatureSize();
+
+                // Arrays to store analysis results
+                const faceColors = new Float32Array(positions.length);
+                const undercuts = [];
+                const closedLoops = [];
+                const majorUndercuts = [];
+
+                // Analyze each triangle
+                for (let i = 0; i < positions.length; i += 9) {
+                    // Get triangle vertices
+                    const v1 = new THREE.Vector3(positions[i], positions[i+1], positions[i+2]);
+                    const v2 = new THREE.Vector3(positions[i+3], positions[i+4], positions[i+5]);
+                    const v3 = new THREE.Vector3(positions[i+6], positions[i+7], positions[i+8]);
+
+                    // Get face normal
+                    const normal = new THREE.Vector3(normals[i], normals[i+1], normals[i+2]);
+
+                    // Calculate dot product with draw direction
+                    const dot = normal.dot(this.drawDirection);
+
+                    // Classify the face
+                    let color = [0.16, 0.65, 0.27]; // Green - safe
+
+                    if (dot < -threshold) {
+                        // This is an undercut
+                        const triangleArea = this.getTriangleArea(v1, v2, v3);
+                        const maxEdgeLength = Math.max(
+                            v1.distanceTo(v2),
+                            v2.distanceTo(v3),
+                            v3.distanceTo(v1)
+                        );
+
+                        if (maxEdgeLength < smallFeatureSize) {
+                            // Small undercut - silicone can handle it
+                            color = [1.0, 0.76, 0.03]; // Yellow
+                            undercuts.push({
+                                position: v1.clone().add(v2).add(v3).divideScalar(3),
+                                size: maxEdgeLength,
+                                angle: Math.acos(-dot) * 180 / Math.PI,
+                                type: 'small'
+                            });
+                        } else {
+                            // Major undercut - needs membrane
+                            color = [0.99, 0.49, 0.08]; // Orange
+                            majorUndercuts.push({
+                                position: v1.clone().add(v2).add(v3).divideScalar(3),
+                                size: maxEdgeLength,
+                                angle: Math.acos(-dot) * 180 / Math.PI,
+                                type: 'major'
+                            });
+                        }
+                    } else if (dot < 0.1) {
+                        // Nearly perpendicular - potential issue
+                        color = [1.0, 0.76, 0.03]; // Yellow
+                    }
+
+                    // Set color for all vertices of this triangle
+                    for (let j = 0; j < 9; j += 3) {
+                        faceColors[i + j] = color[0];
+                        faceColors[i + j + 1] = color[1];
+                        faceColors[i + j + 2] = color[2];
+                    }
+                }
+
+                // Detect closed loops and cavities
+                await this.detectClosedLoops(closedLoops);
+
+                // Store results
+                this.geometry.setAttribute('color', new THREE.BufferAttribute(faceColors, 3));
+
+                // Generate issues
+                this.generateIssues(undercuts, majorUndercuts, closedLoops);
+            }
+
+            async detectClosedLoops(closedLoops) {
+                // Simplified closed loop detection
+                // In a real implementation, this would use more sophisticated topology analysis
+                const bbox = this.geometry.boundingBox;
+                const center = bbox.getCenter(new THREE.Vector3());
+                const size = bbox.getSize(new THREE.Vector3());
+
+                // Look for internal geometry that might indicate closed loops
+                const positions = this.geometry.attributes.position.array;
+                const normals = this.geometry.attributes.normal.array;
+
+                const internalFaces = [];
+
+                for (let i = 0; i < positions.length; i += 9) {
+                    const v1 = new THREE.Vector3(positions[i], positions[i+1], positions[i+2]);
+                    const normal = new THREE.Vector3(normals[i], normals[i+1], normals[i+2]);
+
+                    // Check if face is pointing inward (simplified heuristic)
+                    const toCenter = center.clone().sub(v1).normalize();
+                    const dot = normal.dot(toCenter);
+
+                    if (dot > 0.8) {
+                        internalFaces.push({
+                            position: v1,
+                            normal: normal.clone()
+                        });
+                    }
+                }
+
+                // Group nearby internal faces as potential closed loops
+                if (internalFaces.length > 10) {
+                    closedLoops.push({
+                        position: center,
+                        faces: internalFaces.length,
+                        type: 'internal_cavity'
+                    });
+                }
+            }
+
+            generateIssues(undercuts, majorUndercuts, closedLoops) {
+                // Small undercuts
+                undercuts.forEach(undercut => {
+                    this.issues.push({
+                        type: 'Minor Undercut',
+                        severity: 'warning',
+                        description: `Small undercut (${undercut.size.toFixed(1)}mm) at angle ${undercut.angle.toFixed(1)}°`,
+                        recommendation: 'Silicone flexibility should handle this',
+                        position: undercut.position
+                    });
+                });
+
+                // Major undercuts
+                majorUndercuts.forEach(undercut => {
+                    this.issues.push({
+                        type: 'Major Undercut',
+                        severity: 'error',
+                        description: `Large undercut (${undercut.size.toFixed(1)}mm) at angle ${undercut.angle.toFixed(1)}°`,
+                        recommendation: 'Requires membrane or split mold design',
+                        position: undercut.position
+                    });
+                });
+
+                // Closed loops
+                closedLoops.forEach(loop => {
+                    this.issues.push({
+                        type: 'Closed Loop/Cavity',
+                        severity: 'error',
+                        description: `Internal cavity detected with ${loop.faces} internal faces`,
+                        recommendation: 'Requires core, inserts, or significant mold splitting',
+                        position: loop.position
+                    });
+                });
+
+                // Overall assessment
+                if (majorUndercuts.length === 0 && closedLoops.length === 0) {
+                    this.issues.push({
+                        type: 'Overall Assessment',
+                        severity: 'info',
+                        description: 'Good extraction potential with current draw direction',
+                        recommendation: 'Minor undercuts should not prevent extraction',
+                        position: null
+                    });
+                }
+            }
+
+            colorizeByIssues() {
+                // Update mesh material to use vertex colors
+                const material = new THREE.MeshLambertMaterial({
+                    vertexColors: true,
+                    transparent: true,
+                    opacity: 0.9
+                });
+                this.mesh.material = material;
+            }
+
+            displayResults() {
+                const statsContainer = document.getElementById('stats');
+                const issuesContainer = document.getElementById('issues');
+
+                // Calculate statistics
+                const minorUndercuts = this.issues.filter(i => i.type === 'Minor Undercut').length;
+                const majorUndercuts = this.issues.filter(i => i.type === 'Major Undercut').length;
+                const closedLoops = this.issues.filter(i => i.type === 'Closed Loop/Cavity').length;
+                const totalFaces = this.geometry.attributes.position.count / 3;
+
+                // Display stats
+                statsContainer.innerHTML = `
+                    <h4>Analysis Summary</h4>
+                    <div class="stat-item">
+                        <span>Total Faces:</span>
+                        <span>${totalFaces.toLocaleString()}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Minor Undercuts:</span>
+                        <span>${minorUndercuts}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Major Undercuts:</span>
+                        <span>${majorUndercuts}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Closed Loops:</span>
+                        <span>${closedLoops}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>Draw Direction:</span>
+                        <span>${this.getDrawDirectionName()}</span>
+                    </div>
+                `;
+
+                // Display issues
+                issuesContainer.innerHTML = '';
+
+                if (this.issues.length === 0) {
+                    issuesContainer.innerHTML = '<p style="text-align: center; color: #28a745; padding: 20px;">✅ No extraction issues detected!</p>';
+                    return;
+                }
+
+                this.issues.forEach(issue => {
+                    const issueElement = document.createElement('div');
+                    issueElement.className = `issue ${issue.severity}`;
+
+                    issueElement.innerHTML = `
+                        <div class="issue-type">${this.getIssueIcon(issue.severity)} ${issue.type}</div>
+                        <div class="issue-details">${issue.description}</div>
+                        <div class="issue-details"><strong>Recommendation:</strong> ${issue.recommendation}</div>
+                    `;
+
+                    if (issue.position) {
+                        issueElement.style.cursor = 'pointer';
+                        issueElement.addEventListener('click', () => {
+                            this.focusOnPosition(issue.position);
+                        });
+                    }
+
+                    issuesContainer.appendChild(issueElement);
+                });
+            }
+
+            getDrawDirectionName() {
+                const dir = this.drawDirection;
+                if (dir.x === 1) return 'X-axis (Right)';
+                if (dir.x === -1) return '-X-axis (Left)';
+                if (dir.y === 1) return 'Y-axis (Forward)';
+                if (dir.y === -1) return '-Y-axis (Backward)';
+                if (dir.z === 1) return 'Z-axis (Up)';
+                if (dir.z === -1) return '-Z-axis (Down)';
+                return 'Custom';
+            }
+
+            getIssueIcon(severity) {
+                switch(severity) {
+                    case 'error': return '🚨';
+                    case 'warning': return '⚠️';
+                    case 'info': return 'ℹ️';
+                    default: return '•';
+                }
+            }
+
+            focusOnPosition(position) {
+                // Animate camera to focus on the issue position
+                const bbox = this.geometry.boundingBox;
+                const size = bbox.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+
+                const targetPosition = position.clone().add(
+                    this.drawDirection.clone().multiplyScalar(maxDim * 0.5)
+                );
+
+                // Simple camera animation
+                const startPos = this.camera.position.clone();
+                const endPos = targetPosition;
+                const duration = 1000;
+                const startTime = Date.now();
+
+                const animate = () => {
+                    const elapsed = Date.now() - startTime;
+                    const progress = Math.min(elapsed / duration, 1);
+                    const eased = 1 - Math.pow(1 - progress, 3); // Ease out cubic
+
+                    this.camera.position.lerpVectors(startPos, endPos, eased);
+                    this.camera.lookAt(position);
+
+                    if (progress < 1) {
+                        requestAnimationFrame(animate);
+                    }
+                };
+
+                animate();
+            }
+
+            getTriangleArea(v1, v2, v3) {
+                const edge1 = v2.clone().sub(v1);
+                const edge2 = v3.clone().sub(v1);
+                return edge1.cross(edge2).length() * 0.5;
+            }
+
+            getUndercutThreshold() {
+                return parseFloat(document.getElementById('undercutThreshold').value);
+            }
+
+            getSmallFeatureSize() {
+                return parseFloat(document.getElementById('smallFeatureSize').value);
+            }
+        }
+
+        // STL Loader implementation
+        THREE.STLLoader = function () {};
+
+        THREE.STLLoader.prototype = {
+            parse: function(data) {
+                const reader = new DataView(data);
+                const faces = reader.getUint32(80, true);
+
+                let r, g, b, hasColors = false, colors;
+                let defaultR, defaultG, defaultB, alpha;
+
+                // Check for default color in header
+                for (let index = 0; index < 80 - 10; index++) {
+                    if ((reader.getUint32(index, false) == 0x434F4C4F /*COLO*/) &&
+                        (reader.getUint32(index + 4, false) == 0x523D /*R=*/)) {
+                        hasColors = true;
+                        colors = new Float32Array(faces * 3 * 3);
+                        defaultR = reader.getUint8(index + 6) / 255;
+                        defaultG = reader.getUint8(index + 7) / 255;
+                        defaultB = reader.getUint8(index + 8) / 255;
+                        alpha = reader.getUint8(index + 9) / 255;
+                    }
+                }
+
+                const dataOffset = 84;
+                const faceLength = 12 * 4 + 2;
+
+                const geometry = new THREE.BufferGeometry();
+                const vertices = new Float32Array(faces * 3 * 3);
+                const normals = new Float32Array(faces * 3 * 3);
+
+                for (let face = 0; face < faces; face++) {
+                    const start = dataOffset + face * faceLength;
+                    const normalX = reader.getFloat32(start, true);
+                    const normalY = reader.getFloat32(start + 4, true);
+                    const normalZ = reader.getFloat32(start + 8, true);
+
+                    if (hasColors) {
+                        const packedColor = reader.getUint16(start + 48, true);
+                        if ((packedColor & 0x8000) === 0) {
+                            r = (packedColor & 0x1F) / 31;
+                            g = ((packedColor >> 5) & 0x1F) / 31;
+                            b = ((packedColor >> 10) & 0x1F) / 31;
+                        } else {
+                            r = defaultR;
+                            g = defaultG;
+                            b = defaultB;
+                        }
+                    }
+
+                    for (let i = 1; i <= 3; i++) {
+                        const vertexstart = start + i * 12;
+                        const componentIdx = (face * 3 * 3) + ((i - 1) * 3);
+
+                        vertices[componentIdx] = reader.getFloat32(vertexstart, true);
+                        vertices[componentIdx + 1] = reader.getFloat32(vertexstart + 4, true);
+                        vertices[componentIdx + 2] = reader.getFloat32(vertexstart + 8, true);
+
+                        normals[componentIdx] = normalX;
+                        normals[componentIdx + 1] = normalY;
+                        normals[componentIdx + 2] = normalZ;
+
+                        if (hasColors) {
+                            colors[componentIdx] = r;
+                            colors[componentIdx + 1] = g;
+                            colors[componentIdx + 2] = b;
+                        }
+                    }
+                }
+
+                geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+                geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+
+                if (hasColors) {
+                    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                }
+
+                return geometry;
+            }
+        };
+
+        // Initialize the analyzer
+        const analyzer = new STLMoldAnalyzer();
+    </script>
+</body>
+</html>

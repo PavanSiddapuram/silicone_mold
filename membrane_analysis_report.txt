@@ -1,9 +1,0 @@
-METAMOLD MEMBRANE ANALYSIS REPORT
-========================================
-
-Total membranes required: 0
-
-BLUE METAMOLD:
-  Membranes required: 0
-RED METAMOLD:
-  Membranes required: 0

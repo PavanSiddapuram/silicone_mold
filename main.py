@@ -14,7 +14,7 @@ from src.ruledSurface import ruledSurface
 from src.generate_metamold import generate_metamold_red
 from src.generate_metamold import generate_metamold_blue
 from src.generate_metamold import validate_metamold_files
-from src.clean_mesh import repair_and_wrap_mesh
+from src.clean_mesh import STLMeshRepair
 
 from src.topological_membranes import TopologicalMembranes
 
@@ -150,10 +150,21 @@ print(f"Blue metamold saved to: {metamold_blue_path}")
 
 """ REPAIR THE METAMOLD MESHES """
 
-repair_and_wrap_mesh(
-    metamold_red_path, output_path=os.path.join(results_dir, "metamold_red_wrapped.stl")
+repair_tool = STLMeshRepair(metamold_red_path)
+
+# Analyze the original mesh
+repair_tool.print_analysis()
+
+# Repair the mesh using wrap method (similar to Fusion 360)
+repair_tool.repair_mesh(method='wrap')
+
+# Compare results
+repair_tool.compare_meshes()
+repair_tool.export_mesh(
+    os.path.join(results_dir, "repaired_red_metamold.stl"),
+    mesh_type='repaired'
 )
 
-repair_and_wrap_mesh(
-    metamold_blue_path, output_path=os.path.join(results_dir, "metamold_blue_wrapped.stl")
-)
+# Visualize results (choose your preferred method)
+# Option 1: Trimesh viewer (simple and fast)
+repair_tool.visualize_mesh(use_trimesh_viewer=True)

@@ -1,203 +1,522 @@
-import pymeshlab
-import os
-from pymeshlab import PercentageValue
+import numpy as np
+import trimesh
+import open3d as o3d
+from scipy.spatial import cKDTree
+from sklearn.neighbors import NearestNeighbors
+import warnings
 
-def repair_and_wrap_mesh(mesh_path: str, output_path: str = None, hole_size: int = 100, merge_threshold: float = 1e-5):
-    """
-    Repairs and wraps a mesh using PyMeshLab to approximate Fusion 360's 'Wrap' function.
-    
-    Parameters:
-    - mesh_path (str): Path to the input mesh (.stl, .obj, etc.)
-    - output_path (str): Path to save the repaired mesh. If None, appends '_wrapped' to input name.
-    - hole_size (int): Maximum hole size to close (default: 100)
-    - merge_threshold (float): Distance threshold to merge close vertices (default: 1e-5)
-    """
-    if not os.path.exists(mesh_path):
-        raise FileNotFoundError(f"Mesh file not found: {mesh_path}")
-    
-    ms = pymeshlab.MeshSet()
-    ms.load_new_mesh(mesh_path)
-    
-    print("Starting mesh repair process...")
-    
-    # Step 1: Basic cleanup
-    print("Step 1: Basic cleanup...")
-    try:
-        ms.apply_filter("meshing_remove_duplicate_faces")
-    except:
-        print("Remove duplicate faces filter not available")
-    
-    try:
-        ms.apply_filter("meshing_remove_duplicate_vertices")
-    except:
-        print("Remove duplicate vertices filter not available")
-    
-    try:
-        ms.apply_filter("meshing_remove_unreferenced_vertices")
-    except:
-        print("Remove unreferenced vertices filter not available")
-    
-    # Step 2: Merge close vertices
-    print("Step 2: Merging close vertices...")
-    try:
-        ms.apply_filter("meshing_merge_close_vertices", threshold=PercentageValue(merge_threshold))
-    except Exception as e:
-        print(f"Merge close vertices failed: {e}")
-    
-    # Step 3: Repair non-manifold elements
-    print("Step 3: Repairing non-manifold elements...")
-    try:
-        ms.apply_filter("meshing_repair_non_manifold_edges")
-    except Exception as e:
-        print(f"Non-manifold edge repair failed: {e}")
-        
-    try:
-        ms.apply_filter("meshing_repair_non_manifold_vertices")
-    except Exception as e:
-        print(f"Non-manifold vertex repair failed: {e}")
-    
-    # Step 4: Re-orient faces - try different possible names
-    print("Step 4: Re-orienting faces...")
-    face_reoriented = False
-    possible_reorient_filters = [
-        "meshing_re_orient_faces_coherently",
-        "meshing_reorient_faces_coherently", 
-        "re_orient_all_faces_coherently",
-        "reorient_all_faces_coherently"
-    ]
-    
-    for filter_name in possible_reorient_filters:
+warnings.filterwarnings('ignore')
+
+
+class STLMeshRepair:
+    def __init__(self, stl_file_path):
+        """
+        Initialize the mesh repair tool with an STL file
+
+        Args:
+            stl_file_path (str): Path to the STL file
+        """
+        self.original_mesh = None
+        self.repaired_mesh = None
+        self.load_mesh(stl_file_path)
+
+    def load_mesh(self, file_path):
+        """Load STL file using trimesh"""
         try:
-            ms.apply_filter(filter_name)
-            print(f"Successfully applied {filter_name}")
-            face_reoriented = True
-            break
-        except:
-            continue
-    
-    if not face_reoriented:
-        print("Face reorientation filter not found, skipping...")
-    
-    # Step 5: Try to close holes
-    print("Step 5: Attempting to close holes...")
-    holes_closed = False
-    possible_hole_filters = [
-        "meshing_close_holes",
-        "close_holes"
-    ]
-    
-    for filter_name in possible_hole_filters:
-        try:
-            ms.apply_filter(filter_name, maxholesize=hole_size)
-            print(f"Successfully closed holes using {filter_name}")
-            holes_closed = True
-            break
+            self.original_mesh = trimesh.load_mesh(file_path)
+            print(
+                f"Mesh loaded successfully: {len(self.original_mesh.vertices)} vertices, {len(self.original_mesh.faces)} faces")
         except Exception as e:
-            print(f"{filter_name} failed: {e}")
-            continue
-    
-    if not holes_closed:
-        print("Hole closing failed, trying Poisson reconstruction...")
+            print(f"Error loading mesh: {e}")
+
+    def analyze_mesh_issues(self):
+        """Analyze mesh for common issues"""
+        if self.original_mesh is None:
+            print("No mesh loaded")
+            return
+
+        issues = {}
+
+        # Check for watertight
+        issues['is_watertight'] = self.original_mesh.is_watertight
+        issues['is_winding_consistent'] = self.original_mesh.is_winding_consistent
+
+        # Check for degenerate faces
+        face_areas = self.original_mesh.area_faces
+        degenerate_faces = np.sum(face_areas < 1e-10)
+        issues['degenerate_faces'] = degenerate_faces
+
+        # Check for duplicate vertices
+        unique_vertices = np.unique(self.original_mesh.vertices, axis=0)
+        issues['duplicate_vertices'] = len(self.original_mesh.vertices) - len(unique_vertices)
+
+        # Check for holes/boundaries
+        edges_unique = self.original_mesh.edges_unique
+        edges_face_count = np.bincount(self.original_mesh.edges_unique_inverse)
+        boundary_edges = edges_unique[edges_face_count == 1]
+        issues['boundary_edges'] = len(boundary_edges)
+
+        # Volume and surface area
+        issues['volume'] = self.original_mesh.volume if self.original_mesh.is_watertight else "N/A (not watertight)"
+        issues['surface_area'] = self.original_mesh.area
+
+        return issues
+
+    def print_analysis(self):
+        """Print mesh analysis results"""
+        issues = self.analyze_mesh_issues()
+
+        print("\n=== MESH ANALYSIS ===")
+        print(f"Watertight: {issues['is_watertight']}")
+        print(f"Winding Consistent: {issues['is_winding_consistent']}")
+        print(f"Degenerate Faces: {issues['degenerate_faces']}")
+        print(f"Duplicate Vertices: {issues['duplicate_vertices']}")
+        print(f"Boundary Edges: {issues['boundary_edges']}")
+        print(f"Volume: {issues['volume']}")
+        print(f"Surface Area: {issues['surface_area']:.4f}")
+
+    def remove_duplicate_vertices(self, mesh):
+        """Remove duplicate vertices"""
+        vertices_rounded = np.round(mesh.vertices, decimals=6)
+        unique_vertices, inverse_indices = np.unique(vertices_rounded, axis=0, return_inverse=True)
+
+        # Update faces to use new vertex indices
+        new_faces = inverse_indices[mesh.faces]
+
+        # Create new mesh
+        new_mesh = trimesh.Trimesh(vertices=unique_vertices, faces=new_faces)
+        return new_mesh
+
+    def remove_degenerate_faces(self, mesh):
+        """Remove faces with zero or very small area"""
+        face_areas = mesh.area_faces
+        valid_faces = face_areas > 1e-10
+
+        if np.sum(~valid_faces) > 0:
+            print(f"Removing {np.sum(~valid_faces)} degenerate faces")
+            new_faces = mesh.faces[valid_faces]
+            new_mesh = trimesh.Trimesh(vertices=mesh.vertices, faces=new_faces)
+            return new_mesh
+        return mesh
+
+    def fix_winding_order(self, mesh):
+        """Fix face winding order to ensure consistency"""
         try:
-            # Try to compute normals first
-            normal_computed = False
-            possible_normal_filters = [
-                "compute_normal_for_point_clouds",
-                "compute_normals_for_point_sets",
-                "compute_normal_per_vertex"
-            ]
-            
-            for filter_name in possible_normal_filters:
-                try:
-                    ms.apply_filter(filter_name)
-                    normal_computed = True
-                    break
-                except:
-                    continue
-            
-            if normal_computed:
-                # Try Poisson reconstruction
-                poisson_filters = [
-                    "generate_surface_reconstruction_screened_poisson",
-                    "surface_reconstruction_screened_poisson"
-                ]
-                
-                for filter_name in poisson_filters:
-                    try:
-                        ms.apply_filter(filter_name, depth=8, samplespernode=1.5, pointweight=4.0)
-                        print(f"Poisson reconstruction completed using {filter_name}")
-                        break
-                    except Exception as e:
-                        print(f"{filter_name} failed: {e}")
-                        continue
-            
-        except Exception as poisson_error:
-            print(f"Poisson reconstruction failed: {poisson_error}")
-            print("Proceeding with basic repairs only...")
-    
-    # Step 6: Final cleanup
-    print("Step 6: Final cleanup...")
-    try:
-        ms.apply_filter("meshing_remove_duplicate_faces")
-    except:
-        pass
-    
-    try:
-        ms.apply_filter("meshing_remove_unreferenced_vertices")
-    except:
-        pass
-    
-    # Default output path
-    if output_path is None:
-        base, ext = os.path.splitext(mesh_path)
-        output_path = base + "_wrapped" + ext
-    
-    # Ensure output directory exists
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    ms.save_current_mesh(output_path)
-    print(f"Repaired mesh saved to: {output_path}")
-    return output_path
+            mesh.fix_normals()
+            return mesh
+        except:
+            print("Could not fix winding order automatically")
+            return mesh
 
-def list_available_filters():
-    """
-    Helper function to see what filters are actually available in your PyMeshLab installation.
-    """
-    ms = pymeshlab.MeshSet()
-    print("Available filters:")
-    ms.print_filter_list()
+    def fill_holes_poisson(self, mesh, depth=9):
+        """Fill holes using Poisson surface reconstruction"""
+        # Convert to Open3D mesh
+        o3d_mesh = o3d.geometry.TriangleMesh()
+        o3d_mesh.vertices = o3d.utility.Vector3dVector(mesh.vertices)
+        o3d_mesh.triangles = o3d.utility.Vector3iVector(mesh.faces)
 
-def repair_mesh_basic(mesh_path: str, output_path: str = None):
-    """
-    Most basic mesh repair using only filters that definitely exist.
-    """
-    if not os.path.exists(mesh_path):
-        raise FileNotFoundError(f"Mesh file not found: {mesh_path}")
-    
-    ms = pymeshlab.MeshSet()
-    ms.load_new_mesh(mesh_path)
-    
-    print("Starting basic mesh repair...")
-    
-    # Only apply filters that almost certainly exist
-    try:
-        ms.apply_filter("meshing_remove_duplicate_vertices")
-        print("Removed duplicate vertices")
-    except Exception as e:
-        print(f"Could not remove duplicate vertices: {e}")
-    
-    try:
-        ms.apply_filter("meshing_remove_unreferenced_vertices")
-        print("Removed unreferenced vertices")
-    except Exception as e:
-        print(f"Could not remove unreferenced vertices: {e}")
-    
-    # Default output path
-    if output_path is None:
-        base, ext = os.path.splitext(mesh_path)
-        output_path = base + "_basic_repair" + ext
-    
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    ms.save_current_mesh(output_path)
-    print(f"Basic repaired mesh saved to: {output_path}")
-    return output_path
+        # Compute normals
+        o3d_mesh.compute_vertex_normals()
+
+        # Create point cloud from mesh
+        pcd = o3d_mesh.sample_points_uniformly(number_of_points=50000)
+        pcd.estimate_normals()
+
+        # Poisson reconstruction
+        try:
+            poisson_mesh, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+                pcd, depth=depth, width=0, scale=1.1, linear_fit=False
+            )
+
+            # Convert back to trimesh
+            vertices = np.asarray(poisson_mesh.vertices)
+            faces = np.asarray(poisson_mesh.triangles)
+
+            repaired_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+            return repaired_mesh
+        except Exception as e:
+            print(f"Poisson reconstruction failed: {e}")
+            return mesh
+
+    def wrap_repair(self, resolution=0.01, alpha=0.1):
+        """
+        Advanced wrap repair similar to Fusion 360's wrap functionality
+        Uses alpha shapes and surface reconstruction
+        """
+        if self.original_mesh is None:
+            print("No mesh loaded")
+            return
+
+        print("Starting wrap repair process...")
+
+        # Step 1: Sample points from the mesh surface
+        points = self.original_mesh.sample(50000)
+
+        # Convert to Open3D point cloud
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+
+        # Step 2: Estimate normals
+        pcd.estimate_normals()
+        pcd.orient_normals_consistent_tangent_plane(30)
+
+        # Step 3: Remove outliers
+        pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+
+        # Step 4: Poisson surface reconstruction (main wrap algorithm)
+        print("Performing surface reconstruction...")
+        mesh_poisson, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+            pcd, depth=10, width=0, scale=1.1, linear_fit=False
+        )
+
+        # Step 5: Clean up the mesh
+        mesh_poisson.remove_degenerate_triangles()
+        mesh_poisson.remove_duplicated_triangles()
+        mesh_poisson.remove_duplicated_vertices()
+        mesh_poisson.remove_non_manifold_edges()
+
+        # Convert back to trimesh
+        vertices = np.asarray(mesh_poisson.vertices)
+        faces = np.asarray(mesh_poisson.triangles)
+
+        wrapped_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
+
+        # Step 6: Additional cleanup
+        wrapped_mesh = self.remove_duplicate_vertices(wrapped_mesh)
+        wrapped_mesh = self.remove_degenerate_faces(wrapped_mesh)
+
+        return wrapped_mesh
+
+    def ball_pivoting_repair(self, radii=[0.005, 0.01, 0.02, 0.04]):
+        """Alternative repair method using Ball Pivoting Algorithm"""
+        if self.original_mesh is None:
+            print("No mesh loaded")
+            return
+
+        # Sample points from mesh
+        points = self.original_mesh.sample(30000)
+
+        # Convert to Open3D
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points)
+        pcd.estimate_normals()
+
+        # Ball pivoting reconstruction
+        radii_array = o3d.utility.DoubleVector(radii)
+        try:
+            bpa_mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+                pcd, radii_array
+            )
+
+            # Convert to trimesh
+            vertices = np.asarray(bpa_mesh.vertices)
+            faces = np.asarray(bpa_mesh.triangles)
+
+            return trimesh.Trimesh(vertices=vertices, faces=faces)
+        except:
+            print("Ball pivoting reconstruction failed")
+            return self.original_mesh
+
+    def basic_repair(self):
+        """Basic mesh repair operations"""
+        if self.original_mesh is None:
+            print("No mesh loaded")
+            return
+
+        print("Performing basic repairs...")
+        mesh = self.original_mesh.copy()
+
+        # Remove duplicate vertices
+        mesh = self.remove_duplicate_vertices(mesh)
+
+        # Remove degenerate faces
+        mesh = self.remove_degenerate_faces(mesh)
+
+        # Fix winding order
+        mesh = self.fix_winding_order(mesh)
+
+        # Fill small holes using trimesh
+        try:
+            mesh.fill_holes()
+        except:
+            print("Could not fill holes with basic method")
+
+        return mesh
+
+    def repair_mesh(self, method='wrap', **kwargs):
+        """
+        Main repair function
+
+        Args:
+            method (str): 'wrap', 'basic', 'poisson', 'ball_pivoting'
+            **kwargs: Additional parameters for specific methods
+        """
+        if method == 'wrap':
+            self.repaired_mesh = self.wrap_repair(**kwargs)
+        elif method == 'basic':
+            self.repaired_mesh = self.basic_repair()
+        elif method == 'poisson':
+            self.repaired_mesh = self.fill_holes_poisson(self.original_mesh, **kwargs)
+        elif method == 'ball_pivoting':
+            self.repaired_mesh = self.ball_pivoting_repair(**kwargs)
+        else:
+            print(f"Unknown repair method: {method}")
+            return
+
+        if self.repaired_mesh is not None:
+            print(f"Repair completed using {method} method")
+            print(f"Repaired mesh: {len(self.repaired_mesh.vertices)} vertices, {len(self.repaired_mesh.faces)} faces")
+
+    def compare_meshes(self):
+        """Compare original and repaired mesh statistics"""
+        if self.repaired_mesh is None:
+            print("No repaired mesh available")
+            return
+
+        print("\n=== MESH COMPARISON ===")
+
+        # Original mesh stats
+        orig_issues = self.analyze_mesh_issues()
+
+        # Repaired mesh stats
+        temp_mesh = self.original_mesh
+        self.original_mesh = self.repaired_mesh
+        repair_issues = self.analyze_mesh_issues()
+        self.original_mesh = temp_mesh
+
+        print("ORIGINAL -> REPAIRED")
+        print(f"Watertight: {orig_issues['is_watertight']} -> {repair_issues['is_watertight']}")
+        print(f"Vertices: {len(self.original_mesh.vertices)} -> {len(self.repaired_mesh.vertices)}")
+        print(f"Faces: {len(self.original_mesh.faces)} -> {len(self.repaired_mesh.faces)}")
+        print(f"Boundary Edges: {orig_issues['boundary_edges']} -> {repair_issues['boundary_edges']}")
+        print(f"Degenerate Faces: {orig_issues['degenerate_faces']} -> {repair_issues['degenerate_faces']}")
+
+    def visualize_mesh(self, show_both=True, use_trimesh_viewer=True):
+        """
+        Visualize original and/or repaired mesh using Open3D or Trimesh viewer
+
+        Args:
+            show_both (bool): Show both original and repaired mesh
+            use_trimesh_viewer (bool): Use trimesh viewer (True) or Open3D (False)
+        """
+        if use_trimesh_viewer:
+            self._visualize_with_trimesh(show_both)
+        else:
+            self._visualize_with_open3d(show_both)
+
+    def _visualize_with_trimesh(self, show_both=True):
+        """Visualize using Trimesh's built-in viewer"""
+        if show_both and self.repaired_mesh is not None:
+            # Create scene with both meshes
+            scene = trimesh.Scene()
+
+            # Add original mesh (in red)
+            original_colored = self.original_mesh.copy()
+            original_colored.visual.face_colors = [255, 100, 100, 128]  # Semi-transparent red
+            scene.add_geometry(original_colored, node_name='Original')
+
+            # Add repaired mesh (in blue) - offset slightly for visibility
+            repaired_colored = self.repaired_mesh.copy()
+            repaired_colored.visual.face_colors = [100, 100, 255, 200]  # Semi-transparent blue
+            # Offset repaired mesh slightly
+            offset = np.array([self.original_mesh.bounds[1, 0] - self.original_mesh.bounds[0, 0] + 0.1, 0, 0])
+            repaired_colored.vertices += offset
+            scene.add_geometry(repaired_colored, node_name='Repaired')
+
+            print("Showing both meshes: Original (red, left) and Repaired (blue, right)")
+            scene.show()
+        else:
+            # Show single mesh
+            mesh_to_show = self.repaired_mesh if self.repaired_mesh is not None else self.original_mesh
+            title = "Repaired Mesh" if self.repaired_mesh is not None else "Original Mesh"
+            print(f"Showing: {title}")
+            mesh_to_show.show()
+
+    def _visualize_with_open3d(self, show_both=True):
+        """Visualize using Open3D viewer"""
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(window_name="STL Mesh Repair Viewer", width=1200, height=800)
+
+        if show_both and self.repaired_mesh is not None:
+            # Convert original mesh to Open3D
+            o3d_original = o3d.geometry.TriangleMesh()
+            o3d_original.vertices = o3d.utility.Vector3dVector(self.original_mesh.vertices)
+            o3d_original.triangles = o3d.utility.Vector3iVector(self.original_mesh.faces)
+            o3d_original.compute_vertex_normals()
+            o3d_original.paint_uniform_color([1.0, 0.4, 0.4])  # Red for original
+
+            # Convert repaired mesh to Open3D
+            o3d_repaired = o3d.geometry.TriangleMesh()
+            repaired_vertices = self.repaired_mesh.vertices.copy()
+            # Offset repaired mesh for side-by-side viewing
+            offset = np.array([self.original_mesh.bounds[1, 0] - self.original_mesh.bounds[0, 0] + 0.1, 0, 0])
+            repaired_vertices += offset
+            o3d_repaired.vertices = o3d.utility.Vector3dVector(repaired_vertices)
+            o3d_repaired.triangles = o3d.utility.Vector3iVector(self.repaired_mesh.faces)
+            o3d_repaired.compute_vertex_normals()
+            o3d_repaired.paint_uniform_color([0.4, 0.4, 1.0])  # Blue for repaired
+
+            vis.add_geometry(o3d_original)
+            vis.add_geometry(o3d_repaired)
+            print("Open3D Viewer: Original (red, left) and Repaired (blue, right)")
+        else:
+            # Show single mesh
+            mesh_to_show = self.repaired_mesh if self.repaired_mesh is not None else self.original_mesh
+            o3d_mesh = o3d.geometry.TriangleMesh()
+            o3d_mesh.vertices = o3d.utility.Vector3dVector(mesh_to_show.vertices)
+            o3d_mesh.triangles = o3d.utility.Vector3iVector(mesh_to_show.faces)
+            o3d_mesh.compute_vertex_normals()
+            o3d_mesh.paint_uniform_color([0.7, 0.7, 0.7])  # Gray
+
+            vis.add_geometry(o3d_mesh)
+            title = "Repaired Mesh" if self.repaired_mesh is not None else "Original Mesh"
+            print(f"Open3D Viewer: {title}")
+
+        # Set render options
+        render_option = vis.get_render_option()
+        render_option.mesh_show_back_face = True
+        render_option.mesh_show_wireframe = False
+        render_option.light_on = True
+
+        # Run the visualizer
+        vis.run()
+        vis.destroy_window()
+
+    def visualize_wireframe(self, mesh_type='both'):
+        """
+        Visualize mesh in wireframe mode using Open3D
+
+        Args:
+            mesh_type (str): 'original', 'repaired', or 'both'
+        """
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(window_name="Wireframe View", width=1200, height=800)
+
+        if mesh_type == 'both' and self.repaired_mesh is not None:
+            # Original mesh wireframe
+            o3d_original = o3d.geometry.TriangleMesh()
+            o3d_original.vertices = o3d.utility.Vector3dVector(self.original_mesh.vertices)
+            o3d_original.triangles = o3d.utility.Vector3iVector(self.original_mesh.faces)
+            o3d_original.paint_uniform_color([1.0, 0.0, 0.0])  # Red
+
+            # Repaired mesh wireframe
+            o3d_repaired = o3d.geometry.TriangleMesh()
+            repaired_vertices = self.repaired_mesh.vertices.copy()
+            offset = np.array([self.original_mesh.bounds[1, 0] - self.original_mesh.bounds[0, 0] + 0.1, 0, 0])
+            repaired_vertices += offset
+            o3d_repaired.vertices = o3d.utility.Vector3dVector(repaired_vertices)
+            o3d_repaired.triangles = o3d.utility.Vector3iVector(self.repaired_mesh.faces)
+            o3d_repaired.paint_uniform_color([0.0, 0.0, 1.0])  # Blue
+
+            vis.add_geometry(o3d_original)
+            vis.add_geometry(o3d_repaired)
+        else:
+            if mesh_type == 'repaired' and self.repaired_mesh is not None:
+                mesh_to_show = self.repaired_mesh
+                color = [0.0, 0.0, 1.0]
+            else:
+                mesh_to_show = self.original_mesh
+                color = [1.0, 0.0, 0.0]
+
+            o3d_mesh = o3d.geometry.TriangleMesh()
+            o3d_mesh.vertices = o3d.utility.Vector3dVector(mesh_to_show.vertices)
+            o3d_mesh.triangles = o3d.utility.Vector3iVector(mesh_to_show.faces)
+            o3d_mesh.paint_uniform_color(color)
+
+            vis.add_geometry(o3d_mesh)
+
+        # Enable wireframe mode
+        render_option = vis.get_render_option()
+        render_option.mesh_show_wireframe = True
+        render_option.mesh_show_back_face = True
+        render_option.line_width = 1.0
+
+        print("Wireframe view - Use mouse to rotate, scroll to zoom")
+        vis.run()
+        vis.destroy_window()
+
+    def visualize_point_cloud(self, num_points=10000):
+        """Visualize mesh as point cloud using Open3D"""
+        if self.original_mesh is None:
+            print("No mesh loaded")
+            return
+
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(window_name="Point Cloud View", width=1200, height=800)
+
+        # Sample points from original mesh
+        points_orig = self.original_mesh.sample(num_points)
+        pcd_orig = o3d.geometry.PointCloud()
+        pcd_orig.points = o3d.utility.Vector3dVector(points_orig)
+        pcd_orig.paint_uniform_color([1.0, 0.4, 0.4])  # Red
+
+        vis.add_geometry(pcd_orig)
+
+        if self.repaired_mesh is not None:
+            # Sample points from repaired mesh
+            points_repair = self.repaired_mesh.sample(num_points)
+            pcd_repair = o3d.geometry.PointCloud()
+            # Offset for side-by-side viewing
+            offset = np.array([self.original_mesh.bounds[1, 0] - self.original_mesh.bounds[0, 0] + 0.1, 0, 0])
+            points_repair += offset
+            pcd_repair.points = o3d.utility.Vector3dVector(points_repair)
+            pcd_repair.paint_uniform_color([0.4, 0.4, 1.0])  # Blue
+
+            vis.add_geometry(pcd_repair)
+            print("Point Cloud View: Original (red, left) and Repaired (blue, right)")
+        else:
+            print("Point Cloud View: Original mesh")
+
+        vis.run()
+        vis.destroy_window()
+
+    def interactive_comparison(self):
+        """Interactive comparison tool using Open3D"""
+        if self.repaired_mesh is None:
+            print("No repaired mesh available for comparison")
+            self.visualize_mesh(show_both=False, use_trimesh_viewer=False)
+            return
+
+        print("\n=== INTERACTIVE MESH COMPARISON ===")
+        print("1. Press '1' - Show original mesh only")
+        print("2. Press '2' - Show repaired mesh only")
+        print("3. Press '3' - Show both meshes")
+        print("4. Press 'W' - Toggle wireframe mode")
+        print("5. Press 'ESC' - Exit")
+
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(window_name="Interactive Mesh Comparison", width=1400, height=900)
+
+        # Prepare meshes
+        o3d_original = o3d.geometry.TriangleMesh()
+        o3d_original.vertices = o3d.utility.Vector3dVector(self.original_mesh.vertices)
+        o3d_original.triangles = o3d.utility.Vector3iVector(self.original_mesh.faces)
+        o3d_original.compute_vertex_normals()
+        o3d_original.paint_uniform_color([1.0, 0.4, 0.4])
+
+        o3d_repaired = o3d.geometry.TriangleMesh()
+        o3d_repaired.vertices = o3d.utility.Vector3dVector(self.repaired_mesh.vertices)
+        o3d_repaired.triangles = o3d.utility.Vector3iVector(self.repaired_mesh.faces)
+        o3d_repaired.compute_vertex_normals()
+        o3d_repaired.paint_uniform_color([0.4, 0.4, 1.0])
+
+        # Start with both meshes
+        vis.add_geometry(o3d_original)
+        vis.add_geometry(o3d_repaired)
+
+        vis.run()
+        vis.destroy_window()
+
+    def export_mesh(self, filename, mesh_type='repaired'):
+        """Export the mesh to file"""
+        mesh_to_export = self.repaired_mesh if mesh_type == 'repaired' and self.repaired_mesh is not None else self.original_mesh
+
+        if mesh_to_export is None:
+            print("No mesh to export")
+            return
+
+        try:
+            mesh_to_export.export(filename)
+            print(f"Mesh exported to {filename}")
+        except Exception as e:
+            print(f"Error exporting mesh: {e}")

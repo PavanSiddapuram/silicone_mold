@@ -255,17 +255,16 @@
         <div class="controls hidden" id="controls">
             <div class="control-group">
                 <h3>🎯 Extraction Direction</h3>
-                <label>Draw Direction:</label>
-                <select id="drawDirection">
-                    <option value="z">Z-axis (Up)</option>
-                    <option value="-z">-Z-axis (Down)</option>
-                    <option value="y">Y-axis (Forward)</option>
-                    <option value="-y">-Y-axis (Backward)</option>
-                    <option value="x">X-axis (Right)</option>
-                    <option value="-x">-X-axis (Left)</option>
-                    <option value="auto">Auto-detect Best</option>
-                </select>
+                <label for="drawX">Draw Direction X:</label>
+                <input type="number" id="drawX" step="0.1" value="0">
+
+                <label for="drawY">Draw Direction Y:</label>
+                <input type="number" id="drawY" step="0.1" value="0">
+
+                <label for="drawZ">Draw Direction Z:</label>
+                <input type="number" id="drawZ" step="0.1" value="1">
             </div>
+
 
             <div class="control-group">
                 <h3>⚙️ Analysis Settings</h3>
@@ -555,18 +554,19 @@
             }
 
             setDrawDirection() {
-                const direction = document.getElementById('drawDirection').value;
+                const x = parseFloat(document.getElementById('drawX').value);
+                const y = parseFloat(document.getElementById('drawY').value);
+                const z = parseFloat(document.getElementById('drawZ').value);
 
-                switch(direction) {
-                    case 'x': this.drawDirection.set(1, 0, 0); break;
-                    case '-x': this.drawDirection.set(-1, 0, 0); break;
-                    case 'y': this.drawDirection.set(0, 1, 0); break;
-                    case '-y': this.drawDirection.set(0, -1, 0); break;
-                    case 'z': this.drawDirection.set(0, 0, 1); break;
-                    case '-z': this.drawDirection.set(0, 0, -1); break;
-                    case 'auto': this.findBestDrawDirection(); break;
+                const vector = new THREE.Vector3(x, y, z);
+                if (vector.length() === 0) {
+                    alert("Draw direction cannot be [0, 0, 0]");
+                return;
                 }
+
+                this.drawDirection = vector.normalize();
             }
+
 
             findBestDrawDirection() {
                 // Try all 6 directions and pick the one with fewest issues

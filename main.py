@@ -16,7 +16,7 @@ from src.generate_metamold import generate_metamold_blue
 from src.generate_metamold import validate_metamold_files
 from src.clean_mesh import STLMeshRepair
 
-from src.topological_membranes import TopologicalMembranes
+from src.topological_membranes import highlight_faces_against_normal
 
 import time
 import sys
@@ -190,3 +190,20 @@ repair_tool.export_mesh(
 # Visualize results (choose your preferred method)
 # Option 1: Trimesh viewer (simple and fast)
 # repair_tool.visualize_mesh(use_trimesh_viewer=True)
+
+
+""" FLAG THE FACES NEEDING SECONDARY MEMBRANES """
+
+# BLUE METAMOLD
+
+highlight_faces_against_normal(
+    stl_path=os.path.join(results_dir, "repaired_blue_metamold.stl"),
+    reference_normal=draw_direction
+)
+
+# RED METAMOLD
+
+highlight_faces_against_normal(
+    stl_path=os.path.join(results_dir, "repaired_red_metamold.stl"),
+    reference_normal=(-1) * draw_direction
+)

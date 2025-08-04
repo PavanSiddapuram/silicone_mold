@@ -40,4 +40,6 @@ def highlight_faces_against_normal(stl_path, reference_normal=np.array([0, 0, 1]
     plotter.show()
 
 # Example usage:
-highlight_faces_against_normal(r"C:\Users\hp\OneDrive\Desktop\metamold_red.stl", reference_normal=np.array([-0.37651, 0.69779, -0.60938]))
+highlight_faces_against_normal(r"G:\Fracktal Works\silicone_mold\results\bunny\repaired_red_metamold.stl",
+                               reference_normal=np.array([-0.37651, 0.69779, -0.60938])
+                               )

@@ -100,12 +100,20 @@ class STLMeshRepair:
         return mesh
 
     def fix_winding_order(self, mesh):
-        """Fix face winding order to ensure consistency"""
+        """
+        Fix face winding order and ensure normals point outward.
+        """
         try:
             mesh.fix_normals()
+            if not mesh.is_winding_consistent:
+                mesh = mesh.copy()
+                mesh.invert()
+            if mesh.volume < 0:
+                print("Mesh appears inverted, flipping face winding...")
+                mesh.invert()
             return mesh
-        except:
-            print("Could not fix winding order automatically")
+        except Exception as e:
+            print(f"Could not fix winding order: {e}")
             return mesh
 
     def fill_holes_poisson(self, mesh, depth=9):
@@ -138,54 +146,25 @@ class STLMeshRepair:
             print(f"Poisson reconstruction failed: {e}")
             return mesh
 
-    def wrap_repair(self, resolution=0.01, alpha=0.1):
-        """
-        Advanced wrap repair similar to Fusion 360's wrap functionality
-        Uses alpha shapes and surface reconstruction
-        """
+    def wrap_repair(self):
+        """Minimal repair: remove duplicates and degenerate faces only"""
         if self.original_mesh is None:
             print("No mesh loaded")
             return
 
-        print("Starting wrap repair process...")
+        print("Performing minimal surface-preserving repair...")
 
-        # Step 1: Sample points from the mesh surface
-        points = self.original_mesh.sample(50000)
+        mesh = self.original_mesh.copy()
+        mesh = self.remove_duplicate_vertices(mesh)
+        mesh = self.remove_degenerate_faces(mesh)
+        mesh = self.fix_winding_order(mesh)
 
-        # Convert to Open3D point cloud
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(points)
+        try:
+            mesh.fill_holes()
+        except:
+            print("Could not fill small holes")
 
-        # Step 2: Estimate normals
-        pcd.estimate_normals()
-        pcd.orient_normals_consistent_tangent_plane(30)
-
-        # Step 3: Remove outliers
-        pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
-
-        # Step 4: Poisson surface reconstruction (main wrap algorithm)
-        print("Performing surface reconstruction...")
-        mesh_poisson, _ = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-            pcd, depth=10, width=0, scale=1.1, linear_fit=False
-        )
-
-        # Step 5: Clean up the mesh
-        mesh_poisson.remove_degenerate_triangles()
-        mesh_poisson.remove_duplicated_triangles()
-        mesh_poisson.remove_duplicated_vertices()
-        mesh_poisson.remove_non_manifold_edges()
-
-        # Convert back to trimesh
-        vertices = np.asarray(mesh_poisson.vertices)
-        faces = np.asarray(mesh_poisson.triangles)
-
-        wrapped_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-
-        # Step 6: Additional cleanup
-        wrapped_mesh = self.remove_duplicate_vertices(wrapped_mesh)
-        wrapped_mesh = self.remove_degenerate_faces(wrapped_mesh)
-
-        return wrapped_mesh
+        return mesh
 
     def ball_pivoting_repair(self, radii=[0.005, 0.01, 0.02, 0.04]):
         """Alternative repair method using Ball Pivoting Algorithm"""

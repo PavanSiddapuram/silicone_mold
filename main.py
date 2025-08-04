@@ -150,6 +150,7 @@ print(f"Blue metamold saved to: {metamold_blue_path}")
 
 """ REPAIR THE METAMOLD MESHES """
 
+# RED METAMOLD REPAIR
 repair_tool = STLMeshRepair(metamold_red_path)
 
 # Analyze the original mesh
@@ -167,4 +168,25 @@ repair_tool.export_mesh(
 
 # Visualize results (choose your preferred method)
 # Option 1: Trimesh viewer (simple and fast)
-repair_tool.visualize_mesh(use_trimesh_viewer=True)
+# repair_tool.visualize_mesh(use_trimesh_viewer=True)
+
+# BLUE METAMOLD REPAIR
+
+repair_tool = STLMeshRepair(metamold_blue_path)
+
+# Analyze the original mesh
+repair_tool.print_analysis()
+
+# Repair the mesh using wrap method (similar to Fusion 360)
+repair_tool.repair_mesh(method='wrap')
+
+# Compare results
+repair_tool.compare_meshes()
+repair_tool.export_mesh(
+    os.path.join(results_dir, "repaired_blue_metamold.stl"),
+    mesh_type='repaired'
+)
+
+# Visualize results (choose your preferred method)
+# Option 1: Trimesh viewer (simple and fast)
+# repair_tool.visualize_mesh(use_trimesh_viewer=True)

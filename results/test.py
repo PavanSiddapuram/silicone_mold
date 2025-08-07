@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 
 # Load STL file
-mesh = trimesh.load(r"/home/sumukhs-ubuntu/silicone_mold/results/cow/metamold_blue_wrapped.stl")
+mesh = trimesh.load("results/cow/metamold_blue_wrapped.stl")
 
 # Get face centroids and normals
 face_centroids = mesh.triangles_center

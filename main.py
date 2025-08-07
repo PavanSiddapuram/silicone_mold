@@ -229,5 +229,5 @@ highlight_faces_against_normal(
 highlight_faces_against_normal(
     stl_path=os.path.join(results_dir, "repaired_red_metamold.stl"),
     # reference_normal= (-1) * draw_direction
-    reference_normal=plane_normal_red
+    reference_normal= -1 * plane_normal_red
 )

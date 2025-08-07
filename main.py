@@ -130,12 +130,12 @@ combined_mesh_path = os.path.join(results_dir, "combined_parting_surface.stl")
 print("Generating metamold halves...")
 
 # Generate red metamold and save to file
-metamold_red_path = generate_metamold_red(
+metamold_red_path, plane_normal_red = generate_metamold_red(
     combined_mesh_path, merged_blue_path, draw_direction, combined_parting_surface, results_dir
 )
 
 # Generate blue metamold and save to file
-metamold_blue_path = generate_metamold_blue(
+metamold_blue_path, plane_normal_blue = generate_metamold_blue(
     combined_mesh_path, merged_red_path, draw_direction, combined_parting_surface, results_dir
 )
 
@@ -194,11 +194,7 @@ repair_tool.export_mesh(
 
 """ FLAG THE FACES NEEDING SECONDARY MEMBRANES """
 
-
-
-
 # BASE NORMALS
-
 
 def get_base_plane_normal(stl_path):
     """
@@ -225,7 +221,7 @@ red_base_normal = get_base_plane_normal(os.path.join(results_dir, "repaired_red_
 highlight_faces_against_normal(
     stl_path=os.path.join(results_dir, "repaired_blue_metamold.stl"),
     # reference_normal= draw_direction
-    reference_normal= blue_base_normal
+    reference_normal=plane_normal_blue
 )
 
 # RED METAMOLD
@@ -233,5 +229,5 @@ highlight_faces_against_normal(
 highlight_faces_against_normal(
     stl_path=os.path.join(results_dir, "repaired_red_metamold.stl"),
     # reference_normal= (-1) * draw_direction
-    reference_normal= red_base_normal
+    reference_normal=plane_normal_red
 )

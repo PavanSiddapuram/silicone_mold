@@ -477,7 +477,7 @@ def generate_metamold_red(mesh_path, mold_half_path, draw_direction,
         boundary_points, projected_points, ruled_surface,
         plane_origin, plane_normal, centroid, red_mesh, merged_red, projected_mesh)
 
-    return metamold_red_path
+    return metamold_red_path, plane_normal
 
 
 def generate_metamold_blue(mesh_path, mold_half_path, draw_direction,
@@ -540,7 +540,7 @@ def generate_metamold_blue(mesh_path, mold_half_path, draw_direction,
         boundary_points, projected_points, ruled_surface,
         plane_origin, plane_normal, centroid, red_mesh, merged_blue, projected_mesh)
 
-    return metamold_blue_path
+    return metamold_blue_path, plane_normal
 
 
 def create_complete_metamold(mold_half, ruled_surface, projected_mesh,

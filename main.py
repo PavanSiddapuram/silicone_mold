@@ -194,16 +194,44 @@ repair_tool.export_mesh(
 
 """ FLAG THE FACES NEEDING SECONDARY MEMBRANES """
 
+
+
+
+# BASE NORMALS
+
+
+def get_base_plane_normal(stl_path):
+    """
+    Finds the base face (lowest in Z) and returns its *inward* normal.
+    """
+    mesh = trimesh.load(stl_path)
+    face_normals = mesh.face_normals
+    face_centroids = mesh.triangles_center
+
+    # Find face with the lowest Z centroid — i.e., the bottom
+    base_face_idx = np.argmin(face_centroids[:, 2])
+
+    # Flip the normal to point *into* the STL
+    base_normal = -face_normals[base_face_idx]
+    return base_normal
+
+blue_base_normal = get_base_plane_normal(os.path.join(results_dir, "repaired_blue_metamold.stl"))
+red_base_normal = get_base_plane_normal(os.path.join(results_dir, "repaired_red_metamold.stl"))
+
+
+
 # BLUE METAMOLD
 
 highlight_faces_against_normal(
     stl_path=os.path.join(results_dir, "repaired_blue_metamold.stl"),
-    reference_normal=draw_direction
+    # reference_normal= draw_direction
+    reference_normal= blue_base_normal
 )
 
 # RED METAMOLD
 
 highlight_faces_against_normal(
     stl_path=os.path.join(results_dir, "repaired_red_metamold.stl"),
-    reference_normal=(-1) * draw_direction
+    # reference_normal= (-1) * draw_direction
+    reference_normal= red_base_normal
 )

@@ -16,7 +16,7 @@ from src.generate_metamold import generate_metamold_blue
 from src.generate_metamold import validate_metamold_files
 from src.clean_mesh import STLMeshRepair
 
-from src.topological_membranes import highlight_faces_against_normal
+from src.topological_membranes import analyze_mold_extractability
 
 import time
 import sys
@@ -217,17 +217,17 @@ red_base_normal = get_base_plane_normal(os.path.join(results_dir, "repaired_red_
 
 
 # BLUE METAMOLD
-
-highlight_faces_against_normal(
+analyze_mold_extractability(
     stl_path=os.path.join(results_dir, "repaired_blue_metamold.stl"),
-    # reference_normal= draw_direction
-    reference_normal=plane_normal_blue
+    reference_normal=plane_normal_blue,
+    angle_threshold=100,  # Optional: adjust as needed
+    silicone_stretch_limit=3.0  # Optional: adjust based on your silicone type
 )
 
 # RED METAMOLD
-
-highlight_faces_against_normal(
+analyze_mold_extractability(
     stl_path=os.path.join(results_dir, "repaired_red_metamold.stl"),
-    # reference_normal= (-1) * draw_direction
-    reference_normal= -1 * plane_normal_red
+    reference_normal=-1 * plane_normal_red,
+    angle_threshold=100,  # Optional: adjust as needed
+    silicone_stretch_limit=3.0  # Optional: adjust based on your silicone type
 )

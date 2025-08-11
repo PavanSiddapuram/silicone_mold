@@ -16,6 +16,8 @@ from src.generate_metamold import generate_metamold_blue
 from src.generate_metamold import validate_metamold_files
 from src.clean_mesh import STLMeshRepair
 
+
+
 from src.topological_membranes import analyze_mold_extractability
 
 import time
@@ -213,7 +215,6 @@ def get_base_plane_normal(stl_path):
 
 blue_base_normal = get_base_plane_normal(os.path.join(results_dir, "repaired_blue_metamold.stl"))
 red_base_normal = get_base_plane_normal(os.path.join(results_dir, "repaired_red_metamold.stl"))
-
 
 
 # BLUE METAMOLD

@@ -7,6 +7,45 @@ from src.ruledSurface import trimesh_to_pyvista, combine_and_triangulate_surface
 from scipy.spatial import Delaunay
 import os
 
+# --- Air vent utility functions ---
+
+def filter_overlapping_vents(mesh, vent_indices, gravity_dir, radius, max_vents=10):
+    gravity_dir = gravity_dir / np.linalg.norm(gravity_dir)
+    heights = mesh.vertices[vent_indices] @ gravity_dir
+    sorted_idx = np.argsort(-heights)
+    selected = []
+    selected_points = []
+    for idx in sorted_idx:
+        pt = mesh.vertices[vent_indices[idx]]
+        if all(np.linalg.norm(pt - sp) > 2*radius for sp in selected_points):
+            selected.append(vent_indices[idx])
+            selected_points.append(pt)
+        if len(selected) >= max_vents:
+            break
+    return selected
+
+def find_air_vent_candidates(mesh, gravity_dir, neighbor_radius=2):
+    gravity_dir = gravity_dir / np.linalg.norm(gravity_dir)
+    heights = mesh.vertices @ gravity_dir
+    maxima = []
+    for i, v in enumerate(mesh.vertices):
+        try:
+            neighbors = mesh.vertex_neighbors[i]
+        except AttributeError:
+            from sklearn.neighbors import NearestNeighbors
+            nbrs = NearestNeighbors(n_neighbors=neighbor_radius+1).fit(mesh.vertices)
+            neighbors = nbrs.kneighbors([v], return_distance=False)[0][1:]
+        if all(heights[i] > heights[n] for n in neighbors):
+            maxima.append(i)
+    return maxima
+
+def plot_air_vents(plotter, mesh, vent_indices, color='yellow', radius=5):
+    for idx in vent_indices:
+        center = mesh.vertices[idx]
+        sphere = pv.Sphere(radius=radius, center=center)
+        plotter.add_mesh(sphere, color=color, opacity=1.0, label='Air Vent')
+
+# --- End air vent utility functions ---
 
 def step1_get_draw_directions(draw_direction, merged_red_mesh):
     """
@@ -377,6 +416,20 @@ def visualize_ruled_surface_process(boundary_points, projected_points, ruled_sur
     except Exception as e:
         print(f"Could not create plane visualization: {e}")
 
+    # --- Air vent visualization ---
+    try:
+        # Use the plane normal as gravity direction for vent placement
+        # If merged_red is a trimesh.Trimesh, convert to PyVista for vent finding
+        mesh_for_vents = merged_red if isinstance(merged_red, trimesh.Trimesh) else red_mesh
+        if hasattr(mesh_for_vents, "vertices"):
+            gravity_dir = plane_normal
+            vent_candidates = find_air_vent_candidates(mesh_for_vents, gravity_dir)
+            filtered_vents = filter_overlapping_vents(mesh_for_vents, vent_candidates, gravity_dir, radius=5, max_vents=10)
+            plot_air_vents(plotter, mesh_for_vents, filtered_vents, color='yellow', radius=5)
+            print(f"Plotted {len(filtered_vents)} air vents.")
+    except Exception as e:
+        print(f"Air vent plotting failed: {e}")
+
     plotter.show_axes()
     plotter.add_legend()
     plotter.set_background('white')
@@ -472,7 +525,7 @@ def generate_metamold_red(mesh_path, mold_half_path, draw_direction,
     # NEW: Save the metamold to file
     metamold_red_path = save_metamold(metamold_red, results_dir, "metamold_red.stl")
 
-    # Visualize the process
+    # Visualize the process (air vents are shown here)
     visualize_ruled_surface_process(
         boundary_points, projected_points, ruled_surface,
         plane_origin, plane_normal, centroid, red_mesh, merged_red, projected_mesh)
@@ -535,7 +588,7 @@ def generate_metamold_blue(mesh_path, mold_half_path, draw_direction,
     # NEW: Save the metamold to file
     metamold_blue_path = save_metamold(metamold_blue, results_dir, "metamold_blue.stl")
 
-    # Visualize the process
+    # Visualize the process (air vents are shown here)
     visualize_ruled_surface_process(
         boundary_points, projected_points, ruled_surface,
         plane_origin, plane_normal, centroid, red_mesh, merged_blue, projected_mesh)
@@ -638,7 +691,4 @@ def validate_metamold_files(results_dir):
 
         except Exception as e:
             print(f"✗ Error validating metamold files: {e}")
-            return False
-    else:
-        print("✗ Metamold files not found")
-        return False
+            return

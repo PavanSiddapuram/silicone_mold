@@ -364,7 +364,7 @@ def bottom_surface(projected_points):
 
 
 def visualize_ruled_surface_process(boundary_points, projected_points, ruled_surface,
-                                    plane_origin, plane_normal, centroid, red_mesh, merged_red, projected_mesh):
+                                    plane_origin, plane_normal, centroid, red_mesh, merged_red, projected_mesh,constant_value):
     """
     Visualization function to see the entire process
 
@@ -422,10 +422,13 @@ def visualize_ruled_surface_process(boundary_points, projected_points, ruled_sur
         # If merged_red is a trimesh.Trimesh, convert to PyVista for vent finding
         mesh_for_vents = merged_red if isinstance(merged_red, trimesh.Trimesh) else red_mesh
         if hasattr(mesh_for_vents, "vertices"):
-            gravity_dir = plane_normal
+            if constant_value == 1:
+                gravity_dir = plane_normal
+            else:
+                gravity_dir = -plane_normal
             vent_candidates = find_air_vent_candidates(mesh_for_vents, gravity_dir)
             filtered_vents = filter_overlapping_vents(mesh_for_vents, vent_candidates, gravity_dir, radius=5, max_vents=10)
-            plot_air_vents(plotter, mesh_for_vents, filtered_vents, color='yellow', radius=5)
+            plot_air_vents(plotter, mesh_for_vents, filtered_vents, color='yellow', radius=10)
             print(f"Plotted {len(filtered_vents)} air vents.")
     except Exception as e:
         print(f"Air vent plotting failed: {e}")
@@ -528,7 +531,7 @@ def generate_metamold_red(mesh_path, mold_half_path, draw_direction,
     # Visualize the process (air vents are shown here)
     visualize_ruled_surface_process(
         boundary_points, projected_points, ruled_surface,
-        plane_origin, plane_normal, centroid, red_mesh, merged_red, projected_mesh)
+        plane_origin, plane_normal, centroid, red_mesh, merged_red, projected_mesh,constant_value = -1)
 
     return metamold_red_path, plane_normal
 
@@ -591,7 +594,7 @@ def generate_metamold_blue(mesh_path, mold_half_path, draw_direction,
     # Visualize the process (air vents are shown here)
     visualize_ruled_surface_process(
         boundary_points, projected_points, ruled_surface,
-        plane_origin, plane_normal, centroid, red_mesh, merged_blue, projected_mesh)
+        plane_origin, plane_normal, centroid, red_mesh, merged_blue, projected_mesh,constant_value = 1)
 
     return metamold_blue_path, plane_normal
 

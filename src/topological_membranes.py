@@ -179,14 +179,17 @@ def visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_pr
         print("No problematic areas to visualize.")
         return
 
-    # Filter to only highest difficulty areas (top 50% or difficulty > 0.4)
-    max_difficulty = max(p['extraction_difficulty'] for p in mold_problems)
-    difficulty_threshold = max(0.4, max_difficulty * 0.5)  # Show top 50% or areas > 0.4
-
+    # Filter to only areas with difficulty > 0.9
+    difficulty_threshold = 0.7
     high_difficulty_problems = [p for p in mold_problems if p['extraction_difficulty'] >= difficulty_threshold]
 
+    if not high_difficulty_problems:
+        print(f"\nNo areas found with difficulty >= {difficulty_threshold}")
+        print("Consider lowering the threshold to see problematic areas.")
+        return
+
     print(
-        f"\nVisualizing {len(high_difficulty_problems)} highest difficulty areas (threshold: {difficulty_threshold:.2f})")
+        f"\nVisualizing {len(high_difficulty_problems)} highest difficulty areas (threshold: {difficulty_threshold:.1f})")
 
     # Create PyVista mesh
     pv_faces = np.hstack([
@@ -195,11 +198,11 @@ def visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_pr
     ]).flatten()
     pv_mesh = pv.PolyData(mesh.vertices, pv_faces)
 
-    # Create coloring - only highlight highest difficulty areas
+    # Create coloring - set all faces to 0 initially, then only color the highest difficulty areas
     face_colors = np.zeros(len(mesh.faces))
 
     for problem in high_difficulty_problems:
-        face_colors[problem['face_indices']] = problem['extraction_difficulty']
+        face_colors[problem['face_indices']] = 1.0  # Set to maximum color value
 
     pv_mesh.cell_data["ExtractionDifficulty"] = face_colors
 

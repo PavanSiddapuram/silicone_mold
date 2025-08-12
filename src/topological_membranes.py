@@ -70,6 +70,7 @@ def analyze_mold_extractability(stl_path, reference_normal=np.array([0, 0, 1]),
         mold_problems.append({
             'cluster_id': cluster_id,
             'num_faces': len(cluster_faces),
+            'face_indices': cluster_faces,
             'bbox_size': bbox_size,
             'bbox_volume': bbox_volume,
             'center': np.mean(cluster_centers, axis=0),
@@ -106,8 +107,8 @@ def analyze_mold_extractability(stl_path, reference_normal=np.array([0, 0, 1]),
         else:
             print("  ✅ LOW RISK: Should extract with care")
 
-    # Visualize the results
-    visualize_mold_analysis(mesh, problematic_faces, clusters, mold_problems, angle_threshold)
+    # Visualize only the highest difficulty results
+    visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_problems, angle_threshold)
 
     return mold_problems
 
@@ -171,8 +172,21 @@ def analyze_cluster_geometry(mesh, cluster_faces, cluster_centers, reference_nor
     }
 
 
-def visualize_mold_analysis(mesh, problematic_faces, clusters, mold_problems, angle_threshold):
-    """Visualize the mold extraction analysis results."""
+def visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_problems, angle_threshold):
+    """Visualize only the highest difficulty areas from the mold extraction analysis."""
+
+    if not mold_problems:
+        print("No problematic areas to visualize.")
+        return
+
+    # Filter to only highest difficulty areas (top 50% or difficulty > 0.4)
+    max_difficulty = max(p['extraction_difficulty'] for p in mold_problems)
+    difficulty_threshold = max(0.4, max_difficulty * 0.5)  # Show top 50% or areas > 0.4
+
+    high_difficulty_problems = [p for p in mold_problems if p['extraction_difficulty'] >= difficulty_threshold]
+
+    print(
+        f"\nVisualizing {len(high_difficulty_problems)} highest difficulty areas (threshold: {difficulty_threshold:.2f})")
 
     # Create PyVista mesh
     pv_faces = np.hstack([
@@ -181,50 +195,38 @@ def visualize_mold_analysis(mesh, problematic_faces, clusters, mold_problems, an
     ]).flatten()
     pv_mesh = pv.PolyData(mesh.vertices, pv_faces)
 
-    # Create coloring based on extraction difficulty
+    # Create coloring - only highlight highest difficulty areas
     face_colors = np.zeros(len(mesh.faces))
 
-    if len(mold_problems) > 0:
-        problem_indices = np.where(problematic_faces)[0]
-
-        for cluster_id in set(clusters):
-            if cluster_id == -1:
-                continue
-            cluster_mask = clusters == cluster_id
-            cluster_face_indices = problem_indices[cluster_mask]
-
-            # Find corresponding mold problem
-            problem = next(p for p in mold_problems if p['cluster_id'] == cluster_id)
-            difficulty = problem['extraction_difficulty']
-
-            face_colors[cluster_face_indices] = difficulty
+    for problem in high_difficulty_problems:
+        face_colors[problem['face_indices']] = problem['extraction_difficulty']
 
     pv_mesh.cell_data["ExtractionDifficulty"] = face_colors
 
     # Create visualization
     plotter = pv.Plotter(shape=(1, 2))
 
-    # Left plot: Overall difficulty
+    # Left plot: Highest difficulty areas only
     plotter.subplot(0, 0)
     plotter.add_mesh(pv_mesh, scalars="ExtractionDifficulty", show_edges=True,
                      cmap="Reds", clim=[0, 1])
     plotter.add_scalar_bar(title="Extraction Difficulty")
-    plotter.add_text(f"Mold Extraction Analysis\n(Angle > {angle_threshold}°)",
-                     position='upper_left')
+    plotter.add_text(
+        f"Highest Difficulty Areas Only\n(Angle > {angle_threshold}°, Difficulty >= {difficulty_threshold:.2f})",
+        position='upper_left')
 
-    # Right plot: Problem regions with labels
+    # Right plot: Highest difficulty areas with labels
     plotter.subplot(0, 1)
     plotter.add_mesh(pv_mesh, scalars="ExtractionDifficulty", show_edges=True,
                      cmap="Reds", clim=[0, 1], opacity=0.8)
 
-    # Add labels for high-risk regions
-    for i, problem in enumerate(mold_problems):
-        if problem['extraction_difficulty'] > 0.4:  # Only label medium+ risk
-            risk_level = "HIGH" if problem['extraction_difficulty'] > 0.7 else "MED"
-            plotter.add_point_labels([problem['center']], [f"{risk_level}-{i + 1}"],
-                                     point_size=20, font_size=12)
+    # Add labels only for highest difficulty regions
+    for i, problem in enumerate(high_difficulty_problems):
+        risk_level = "HIGH" if problem['extraction_difficulty'] > 0.7 else "MED"
+        plotter.add_point_labels([problem['center']], [f"{risk_level}-{i + 1}"],
+                                 point_size=20, font_size=12)
 
-    plotter.add_text("Risk Regions", position='upper_left')
+    plotter.add_text("Highest Risk Regions Only", position='upper_left')
     plotter.show()
 
 # Example usage with different silicone properties:

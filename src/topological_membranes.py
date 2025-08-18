@@ -3,6 +3,9 @@ import numpy as np
 import pyvista as pv
 from scipy.spatial.distance import cdist
 from sklearn.cluster import DBSCAN
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import shortest_path
+import networkx as nx
 
 
 def analyze_mold_extractability(stl_path, reference_normal=np.array([0, 0, 1]),
@@ -107,10 +110,182 @@ def analyze_mold_extractability(stl_path, reference_normal=np.array([0, 0, 1]),
         else:
             print("  ✅ LOW RISK: Should extract with care")
 
-    # Visualize only the highest difficulty results
-    visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_problems, angle_threshold)
+    # Find geodesic paths for high-risk regions
+    high_risk_regions = [p for p in mold_problems if p['extraction_difficulty'] >= 0.7]
+
+    if high_risk_regions:
+        print(f"\n=== GEODESIC PATH ANALYSIS ===")
+        print(f"Analyzing {len(high_risk_regions)} high-risk regions...")
+
+        geodesic_results = []
+        for region in high_risk_regions:
+            geodesic_info = find_longest_geodesic_in_region(mesh, region)
+            geodesic_results.append(geodesic_info)
+
+            print(f"\nRegion {region['cluster_id']}:")
+            print(f"  Longest geodesic path length: {geodesic_info['path_length']:.2f}")
+            print(f"  Path complexity: {geodesic_info['complexity']:.3f}")
+            print(f"  Number of path segments: {len(geodesic_info['path_vertices'])}")
+
+        # Visualize with geodesic paths
+        visualize_with_geodesic_paths(mesh, problematic_faces, clusters, mold_problems,
+                                      geodesic_results, angle_threshold)
+    else:
+        # Visualize only the highest difficulty results (original function)
+        visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_problems, angle_threshold)
 
     return mold_problems
+
+
+def find_longest_geodesic_in_region(mesh, region):
+    """
+    Find the longest geodesic path within a problematic region.
+
+    Parameters:
+    - mesh: Trimesh object
+    - region: Dictionary containing region analysis data
+
+    Returns:
+    - Dictionary with geodesic path information
+    """
+    # Get vertices that belong to this region's faces
+    region_face_indices = region['face_indices']
+    region_vertices = set()
+
+    for face_idx in region_face_indices:
+        region_vertices.update(mesh.faces[face_idx])
+
+    region_vertices = list(region_vertices)
+
+    if len(region_vertices) < 2:
+        return {
+            'path_vertices': [],
+            'path_length': 0.0,
+            'complexity': 0.0,
+            'start_vertex': None,
+            'end_vertex': None
+        }
+
+    # Create subgraph for this region
+    vertex_map = {v: i for i, v in enumerate(region_vertices)}
+    region_coords = mesh.vertices[region_vertices]
+
+    # Build adjacency matrix for region vertices
+    edges = []
+    edge_weights = []
+
+    for face_idx in region_face_indices:
+        face = mesh.faces[face_idx]
+        # Add edges between all vertex pairs in each face
+        for i in range(3):
+            for j in range(i + 1, 3):
+                v1, v2 = face[i], face[j]
+                if v1 in vertex_map and v2 in vertex_map:
+                    idx1, idx2 = vertex_map[v1], vertex_map[v2]
+                    # Calculate edge weight (Euclidean distance)
+                    weight = np.linalg.norm(region_coords[idx1] - region_coords[idx2])
+                    edges.append((idx1, idx2))
+                    edge_weights.append(weight)
+
+    if not edges:
+        return {
+            'path_vertices': [],
+            'path_length': 0.0,
+            'complexity': 0.0,
+            'start_vertex': None,
+            'end_vertex': None
+        }
+
+    # Create sparse adjacency matrix
+    n_vertices = len(region_vertices)
+    row_indices = [e[0] for e in edges] + [e[1] for e in edges]
+    col_indices = [e[1] for e in edges] + [e[0] for e in edges]
+    weights = edge_weights + edge_weights  # Make symmetric
+
+    adjacency_matrix = csr_matrix((weights, (row_indices, col_indices)),
+                                  shape=(n_vertices, n_vertices))
+
+    # Find all-pairs shortest paths
+    dist_matrix = shortest_path(adjacency_matrix, directed=False)
+
+    # Find the longest shortest path (diameter)
+    max_distance = 0
+    best_start, best_end = 0, 0
+
+    for i in range(n_vertices):
+        for j in range(i + 1, n_vertices):
+            if not np.isinf(dist_matrix[i, j]) and dist_matrix[i, j] > max_distance:
+                max_distance = dist_matrix[i, j]
+                best_start, best_end = i, j
+
+    # Reconstruct the longest path using NetworkX for path reconstruction
+    G = nx.Graph()
+    for edge, weight in zip(edges, edge_weights):
+        G.add_edge(edge[0], edge[1], weight=weight)
+
+    try:
+        path_indices = nx.shortest_path(G, best_start, best_end, weight='weight')
+        path_vertices = [region_vertices[i] for i in path_indices]
+        path_coords = mesh.vertices[path_vertices]
+
+        # Calculate path complexity (curvature along path)
+        complexity = calculate_path_complexity(path_coords)
+
+    except nx.NetworkXNoPath:
+        # If no path found, return empty result
+        path_vertices = []
+        max_distance = 0.0
+        complexity = 0.0
+
+    return {
+        'path_vertices': path_vertices,
+        'path_length': max_distance,
+        'complexity': complexity,
+        'start_vertex': region_vertices[best_start] if path_vertices else None,
+        'end_vertex': region_vertices[best_end] if path_vertices else None,
+        'path_coordinates': path_coords if path_vertices else np.array([])
+    }
+
+
+def calculate_path_complexity(path_coords):
+    """
+    Calculate complexity of a path based on curvature.
+
+    Parameters:
+    - path_coords: Array of 3D coordinates along the path
+
+    Returns:
+    - complexity: Float representing path complexity (0-1)
+    """
+    if len(path_coords) < 3:
+        return 0.0
+
+    # Calculate curvature at each point along the path
+    curvatures = []
+
+    for i in range(1, len(path_coords) - 1):
+        # Get three consecutive points
+        p1, p2, p3 = path_coords[i - 1], path_coords[i], path_coords[i + 1]
+
+        # Calculate vectors
+        v1 = p2 - p1
+        v2 = p3 - p2
+
+        # Normalize vectors
+        v1_norm = np.linalg.norm(v1)
+        v2_norm = np.linalg.norm(v2)
+
+        if v1_norm > 1e-6 and v2_norm > 1e-6:
+            v1_unit = v1 / v1_norm
+            v2_unit = v2 / v2_norm
+
+            # Calculate curvature as the change in direction
+            cross_product = np.cross(v1_unit, v2_unit)
+            curvature = np.linalg.norm(cross_product)
+            curvatures.append(curvature)
+
+    # Return mean curvature as complexity measure
+    return np.mean(curvatures) if curvatures else 0.0
 
 
 def analyze_cluster_geometry(mesh, cluster_faces, cluster_centers, reference_normal, stretch_limit):
@@ -172,6 +347,106 @@ def analyze_cluster_geometry(mesh, cluster_faces, cluster_centers, reference_nor
     }
 
 
+def visualize_with_geodesic_paths(mesh, problematic_faces, clusters, mold_problems,
+                                  geodesic_results, angle_threshold):
+    """
+    Visualize highest difficulty areas with their longest geodesic paths.
+    """
+    # Filter to only areas with difficulty > 0.7
+    difficulty_threshold = 0.7
+    high_difficulty_problems = [p for p in mold_problems if p['extraction_difficulty'] >= difficulty_threshold]
+
+    if not high_difficulty_problems:
+        print(f"\nNo areas found with difficulty >= {difficulty_threshold}")
+        print("Consider lowering the threshold to see problematic areas.")
+        return
+
+    print(f"\nVisualizing {len(high_difficulty_problems)} highest difficulty areas with geodesic paths")
+
+    # Create PyVista mesh
+    pv_faces = np.hstack([
+        np.full((mesh.faces.shape[0], 1), 3),
+        mesh.faces
+    ]).flatten()
+    pv_mesh = pv.PolyData(mesh.vertices, pv_faces)
+
+    # Create coloring - set all faces to 0 initially, then only color the highest difficulty areas
+    face_colors = np.zeros(len(mesh.faces))
+
+    for problem in high_difficulty_problems:
+        face_colors[problem['face_indices']] = 1.0  # Set to maximum color value
+
+    pv_mesh.cell_data["ExtractionDifficulty"] = face_colors
+
+    # Create visualization with 3 subplots
+    plotter = pv.Plotter(shape=(1, 3), window_size=(1800, 600))
+
+    # Left plot: Highest difficulty areas only
+    plotter.subplot(0, 0)
+    plotter.add_mesh(pv_mesh, scalars="ExtractionDifficulty", show_edges=True,
+                     cmap="Reds", clim=[0, 1])
+    plotter.add_scalar_bar(title="Extraction Difficulty")
+    plotter.add_text(f"High Difficulty Regions\n(Difficulty >= {difficulty_threshold:.1f})",
+                     position='upper_left')
+
+    # Middle plot: Regions with labels
+    plotter.subplot(0, 1)
+    plotter.add_mesh(pv_mesh, scalars="ExtractionDifficulty", show_edges=True,
+                     cmap="Reds", clim=[0, 1], opacity=0.8)
+
+    # Add labels for highest difficulty regions
+    for i, problem in enumerate(high_difficulty_problems):
+        risk_level = "HIGH" if problem['extraction_difficulty'] > 0.7 else "MED"
+        plotter.add_point_labels([problem['center']], [f"{risk_level}-{i + 1}"],
+                                 point_size=20, font_size=12)
+
+    plotter.add_text("Risk Region Labels", position='upper_left')
+
+    # Right plot: Geodesic paths
+    plotter.subplot(0, 2)
+    plotter.add_mesh(pv_mesh, scalars="ExtractionDifficulty", show_edges=True,
+                     cmap="Reds", clim=[0, 1], opacity=0.6)
+
+    # Add geodesic paths
+    colors = ['yellow', 'cyan', 'lime', 'magenta', 'orange', 'white']
+
+    for i, (problem, geodesic) in enumerate(zip(high_difficulty_problems, geodesic_results)):
+        if len(geodesic['path_coordinates']) > 1:
+            # Create spline for the geodesic path
+            try:
+                path_spline = pv.Spline(geodesic['path_coordinates'], n_points=len(geodesic['path_coordinates']) * 2)
+                color = colors[i % len(colors)]
+                plotter.add_mesh(path_spline, color=color, line_width=5,
+                                 label=f"Region {problem['cluster_id']}")
+            except:
+                # Fallback: create polyline manually
+                n_points = len(geodesic['path_coordinates'])
+                lines = []
+                for j in range(n_points - 1):
+                    lines.extend([2, j, j + 1])  # 2 points per line segment
+
+                path_polyline = pv.PolyData(geodesic['path_coordinates'], lines=lines)
+                color = colors[i % len(colors)]
+                plotter.add_mesh(path_polyline, color=color, line_width=5,
+                                 label=f"Region {problem['cluster_id']}")
+
+            # Add start and end points
+            if geodesic['start_vertex'] is not None:
+                start_coord = mesh.vertices[geodesic['start_vertex']]
+                plotter.add_mesh(pv.Sphere(radius=mesh.scale / 100, center=start_coord),
+                                 color='green', label=f"Start {i + 1}")
+
+            if geodesic['end_vertex'] is not None:
+                end_coord = mesh.vertices[geodesic['end_vertex']]
+                plotter.add_mesh(pv.Sphere(radius=mesh.scale / 100, center=end_coord),
+                                 color='red', label=f"End {i + 1}")
+
+    plotter.add_text("Longest Geodesic Paths\nin High-Risk Regions", position='upper_left')
+    plotter.add_legend()
+
+    plotter.show()
+
+
 def visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_problems, angle_threshold):
     """Visualize only the highest difficulty areas from the mold extraction analysis."""
 
@@ -179,7 +454,7 @@ def visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_pr
         print("No problematic areas to visualize.")
         return
 
-    # Filter to only areas with difficulty > 0.9
+    # Filter to only areas with difficulty > 0.7
     difficulty_threshold = 0.7
     high_difficulty_problems = [p for p in mold_problems if p['extraction_difficulty'] >= difficulty_threshold]
 
@@ -232,6 +507,13 @@ def visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_pr
     plotter.add_text("Highest Risk Regions Only", position='upper_left')
     plotter.show()
 
-# Example usage with different silicone properties:
-# analyze_mold_extractability("model.stl", silicone_stretch_limit=2.5)  # Stiffer silicone
-# analyze_mold_extractability("model.stl", silicone_stretch_limit=4.0)  # More flexible silicone
+
+# # Example usage:
+# if __name__ == "__main__":
+#     # Example usage with different silicone properties:
+#     # analyze_mold_extractability("model.stl", silicone_stretch_limit=2.5)  # Stiffer silicone
+#     # analyze_mold_extractability("model.stl", silicone_stretch_limit=4.0)  # More flexible silicone
+#
+#     # Example with your STL file:
+#     # results = analyze_mold_extractability("your_model.stl")
+#     pass

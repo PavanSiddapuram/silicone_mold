@@ -521,6 +521,7 @@ def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal):
     Create a membrane surface along a geodesic path using ray casting and Delaunay triangulation.
     Casts rays from each geodesic point along the reference normal to find intersections with the mesh,
     then creates a Delaunay surface between the original points and intersection points.
+    Uses convex hull constraint to prevent triangulation from extending beyond the point cloud.
 
     Args:
         mesh (trimesh.Trimesh): The input mesh
@@ -530,6 +531,8 @@ def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal):
     Returns:
         pv.PolyData: Membrane surface as PyVista mesh
     """
+    from scipy.spatial import ConvexHull
+
     path_coords = geodesic_info['path_coordinates']
     if len(path_coords) < 2:
         return None
@@ -537,15 +540,11 @@ def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal):
     # Normalize reference normal
     reference_normal = -1 * reference_normal / np.linalg.norm(reference_normal)
 
-    # Cast rays from each geodesic point along the reference normal
-    membrane_points = []
+    # Lists to store valid points
+    valid_geodesic_points = []
+    valid_intersection_points = []
 
-    # Add original geodesic points
-    membrane_points.extend(path_coords)
-
-    # Cast rays and find intersections
-    ray_intersections = []
-
+    # Cast rays and find intersections, only keep points with valid intersections
     for point in path_coords:
         # Cast ray in reference normal direction to find intersection
         ray_origins = np.array([point])
@@ -569,33 +568,25 @@ def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal):
                 # Choose the closest valid intersection
                 closest_idx = np.argmin(valid_distances)
                 intersection_point = valid_locations[closest_idx]
-                ray_intersections.append(intersection_point)
-            else:
-                # If no valid intersection found, project along reference normal
-                projection_distance = mesh.scale * 0.5
-                projected_point = point + reference_normal * projection_distance
-                ray_intersections.append(projected_point)
-        else:
-            # If no intersection found, project along reference normal
-            projection_distance = mesh.scale * 0.5
-            projected_point = point + reference_normal * projection_distance
-            ray_intersections.append(projected_point)
 
-    # Add intersection points to membrane points
-    membrane_points.extend(ray_intersections)
+                # Add both the original geodesic point and its intersection
+                valid_geodesic_points.append(point)
+                valid_intersection_points.append(intersection_point)
 
-    # Convert to numpy array
-    membrane_points = np.array(membrane_points)
+    # Check if we have enough valid points
+    if len(valid_geodesic_points) < 2:
+        print("Not enough valid intersection points found for membrane creation")
+        return None
+
+    # Combine all valid points
+    all_membrane_points = valid_geodesic_points + valid_intersection_points
+    membrane_points = np.array(all_membrane_points)
 
     if len(membrane_points) < 4:  # Need at least 4 points for triangulation
         return None
 
-    # Create simple Delaunay triangulation using PyVista
+    # Create constrained Delaunay triangulation using convex hull boundary
     try:
-        # Create point cloud with all points (geodesic + intersections)
-        point_cloud = pv.PolyData(membrane_points)
-
-        # Use 2D Delaunay triangulation (project to best-fit plane)
         # Find the best fitting plane using PCA of all points
         centered_points = membrane_points - np.mean(membrane_points, axis=0)
         U, S, Vt = np.linalg.svd(centered_points, full_matrices=False)
@@ -603,18 +594,90 @@ def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal):
         # Project to 2D using first two principal components
         points_2d = centered_points @ Vt[:2].T
 
-        # Create 2D Delaunay triangulation
+        # Create convex hull in 2D to get boundary constraint
+        hull_2d = ConvexHull(points_2d)
+        hull_vertices = hull_2d.vertices
+
+        # Create boundary edges from convex hull
+        boundary_edges = []
+        for i in range(len(hull_vertices)):
+            boundary_edges.append([hull_vertices[i], hull_vertices[(i + 1) % len(hull_vertices)]])
+        boundary_edges = np.array(boundary_edges)
+
+        # Create 2D point cloud with boundary constraints
         points_2d_padded = np.column_stack([points_2d, np.zeros(len(points_2d))])
         point_cloud_2d = pv.PolyData(points_2d_padded)
+
+        # Add boundary edges as lines to the point cloud
+        boundary_lines = []
+        for edge in boundary_edges:
+            boundary_lines.extend([2, edge[0], edge[1]])  # 2 points per line
+
+        if len(boundary_lines) > 0:
+            point_cloud_2d.lines = np.array(boundary_lines)
+
+        # Perform constrained Delaunay triangulation
         delaunay_2d = point_cloud_2d.delaunay_2d()
 
-        # Create 3D surface with original points and 2D triangulation
-        membrane_surface = pv.PolyData(membrane_points, delaunay_2d.faces)
+        # Filter triangles to only include those within the convex hull
+        # Get triangle centers and check if they're inside the hull
+        triangle_faces = delaunay_2d.faces.reshape(-1, 4)[:, 1:4]  # Remove the '3' count
+        valid_triangles = []
+
+        for triangle in triangle_faces:
+            # Get triangle vertices in 2D
+            tri_verts_2d = points_2d[triangle]
+            tri_center = np.mean(tri_verts_2d, axis=0)
+
+            # Check if triangle center is inside the convex hull
+            # Simple point-in-convex-polygon test
+            hull_points_2d = points_2d[hull_vertices]
+
+            # Use a simple point-in-polygon test
+            def point_in_convex_polygon(point, polygon_vertices):
+                """Check if point is inside convex polygon using cross products"""
+                n = len(polygon_vertices)
+                sign = None
+
+                for i in range(n):
+                    v1 = polygon_vertices[i]
+                    v2 = polygon_vertices[(i + 1) % n]
+
+                    # Cross product of edge and point vectors
+                    cross = (v2[0] - v1[0]) * (point[1] - v1[1]) - (v2[1] - v1[1]) * (point[0] - v1[0])
+
+                    if abs(cross) < 1e-10:  # Point on edge
+                        continue
+
+                    current_sign = cross > 0
+                    if sign is None:
+                        sign = current_sign
+                    elif sign != current_sign:
+                        return False
+
+                return True
+
+            if point_in_convex_polygon(tri_center, hull_points_2d):
+                valid_triangles.append(triangle)
+
+        if len(valid_triangles) == 0:
+            print("No valid triangles found within convex hull")
+            return None
+
+        # Create faces array for PyVista (add '3' count for each triangle)
+        valid_triangles = np.array(valid_triangles)
+        faces_with_count = np.column_stack([
+            np.full(len(valid_triangles), 3),
+            valid_triangles
+        ]).flatten()
+
+        # Create 3D surface with original points and constrained triangulation
+        membrane_surface = pv.PolyData(membrane_points, faces_with_count)
 
         return membrane_surface
 
     except Exception as e:
-        print(f"Delaunay triangulation failed: {e}")
+        print(f"Constrained Delaunay triangulation failed: {e}")
         return None
 
 
@@ -637,19 +700,26 @@ def visualize_with_membranes(mesh, high_difficulty_problems, geodesic_results, r
     plotter = pv.Plotter()
 
     # Add original mesh
-    plotter.add_mesh(pv_mesh, color='lightgray', opacity=0.7, show_edges=True)
+    plotter.add_mesh(pv_mesh, color='lightgray', opacity=1, show_edges=True)
 
     # Add membranes for each high-risk region
     colors = ['red', 'blue', 'green', 'yellow', 'cyan', 'magenta']
+    membrane_count = 0
+
     for i, (problem, geodesic) in enumerate(zip(high_difficulty_problems, geodesic_results)):
         membrane = create_membrane_from_geodesic(mesh, geodesic, reference_normal)
         if membrane is not None:
-            color = colors[i % len(colors)]
-            plotter.add_mesh(membrane, color=color, opacity=0.8,
-                             label=f"Membrane {i + 1}")
+            color = colors[membrane_count % len(colors)]
+            plotter.add_mesh(membrane, color=color, opacity=1,
+                             label=f"Membrane {membrane_count + 1}")
+            membrane_count += 1
+        else:
+            print(f"Failed to create membrane {i + 1} - not enough valid intersections")
 
-    plotter.add_legend()
-    plotter.add_text("Mesh with Ray-Cast Delaunay Membranes\n(Along Reference Normal)", position='upper_left')
+    if membrane_count > 0:
+        plotter.add_legend()
+
+    plotter.add_text("Mesh with Constrained Delaunay Membranes\n(Within Convex Hull Boundary)", position='upper_left')
     plotter.show()
 
 # # Example usage:

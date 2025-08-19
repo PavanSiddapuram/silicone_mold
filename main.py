@@ -18,7 +18,7 @@ from src.clean_mesh import STLMeshRepair
 
 
 
-from src.topological_membranes import analyze_mold_extractability
+from src.topological_membranes import analyze_mold_extractability_with_membrane
 
 import time
 import sys
@@ -217,18 +217,45 @@ blue_base_normal = get_base_plane_normal(os.path.join(results_dir, "repaired_blu
 red_base_normal = get_base_plane_normal(os.path.join(results_dir, "repaired_red_metamold.stl"))
 
 
-# BLUE METAMOLD
-analyze_mold_extractability(
+# # BLUE METAMOLD
+# analyze_mold_extractability(
+#     stl_path=os.path.join(results_dir, "repaired_blue_metamold.stl"),
+#     reference_normal=plane_normal_blue,
+#     angle_threshold=100,  # Optional: adjust as needed
+#     silicone_stretch_limit=5.0  # Optional: adjust based on your silicone type
+# )
+#
+# # RED METAMOLD
+# analyze_mold_extractability(
+#     stl_path=os.path.join(results_dir, "repaired_red_metamold.stl"),
+#     reference_normal=-1 * plane_normal_red,
+#     angle_threshold=100,  # Optional: adjust as needed
+#     silicone_stretch_limit=5.0  # Optional: adjust based on your silicone type
+# )
+
+# Basic analysis with default settings
+blue_metamold_membranes = analyze_mold_extractability_with_membrane(
     stl_path=os.path.join(results_dir, "repaired_blue_metamold.stl"),
     reference_normal=plane_normal_blue,
-    angle_threshold=100,  # Optional: adjust as needed
-    silicone_stretch_limit=5.0  # Optional: adjust based on your silicone type
+    angle_threshold=100,
+    silicone_stretch_limit=5.0,
+    membrane_thickness=2.0,
+    membrane_resolution=50
 )
 
-# RED METAMOLD
-analyze_mold_extractability(
+red_metamold_membranes = analyze_mold_extractability_with_membrane(
     stl_path=os.path.join(results_dir, "repaired_red_metamold.stl"),
     reference_normal=-1 * plane_normal_red,
-    angle_threshold=100,  # Optional: adjust as needed
-    silicone_stretch_limit=5.0  # Optional: adjust based on your silicone type
+    angle_threshold=100,
+    silicone_stretch_limit=5.0,
+    membrane_thickness=2.0,
+    membrane_resolution=50
 )
+
+# # Export membrane STL files
+# if results['membrane_surfaces']:
+#     exported_files = export_membrane_stl(results['membrane_surfaces'])
+#     print(f"Exported {len(exported_files)} membrane files")
+#
+# # Save comprehensive report
+# save_analysis_report(results, "detailed_mold_report.txt")

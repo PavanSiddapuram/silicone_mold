@@ -140,7 +140,7 @@ def analyze_mold_extractability(stl_path, reference_normal=np.array([0, 0, 1]),
     high_risk_regions = [p for p in mold_problems if p['extraction_difficulty'] >= 0.7]
     if high_risk_regions:
         print("\nGenerating extraction membranes for high-risk regions...")
-        visualize_with_membranes(mesh, high_risk_regions, geodesic_results)
+        visualize_with_membranes(mesh, high_risk_regions, geodesic_results, reference_normal)
 
     return mold_problems
 
@@ -516,15 +516,16 @@ def visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_pr
     plotter.show()
 
 
-def create_membrane_from_geodesic(mesh, geodesic_info, membrane_width=0.1, membrane_height=0.2):
+def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal):
     """
-    Create a membrane surface along a geodesic path to facilitate mold extraction.
+    Create a membrane surface along a geodesic path using ray casting and Delaunay triangulation.
+    Casts rays from each geodesic point along the reference normal to find intersections with the mesh,
+    then creates a Delaunay surface between the original points and intersection points.
 
     Args:
         mesh (trimesh.Trimesh): The input mesh
         geodesic_info (dict): Geodesic path information from find_longest_geodesic_in_region
-        membrane_width (float): Width of the membrane relative to mesh scale
-        membrane_height (float): Height of the membrane relative to mesh scale
+        reference_normal (np.array): Reference normal direction for ray casting
 
     Returns:
         pv.PolyData: Membrane surface as PyVista mesh
@@ -533,68 +534,100 @@ def create_membrane_from_geodesic(mesh, geodesic_info, membrane_width=0.1, membr
     if len(path_coords) < 2:
         return None
 
-    # Scale the width and height based on mesh scale
-    width = membrane_width * mesh.scale
-    height = membrane_height * mesh.scale
+    # Normalize reference normal
+    reference_normal = -1 * reference_normal / np.linalg.norm(reference_normal)
 
-    # Generate membrane surface points
+    # Cast rays from each geodesic point along the reference normal
     membrane_points = []
-    membrane_faces = []
-    vertex_count = 0
 
-    # Calculate tangent and normal vectors along the path
-    for i in range(len(path_coords) - 1):
-        # Calculate tangent vector
-        tangent = path_coords[i + 1] - path_coords[i]
-        tangent = tangent / np.linalg.norm(tangent)
+    # Add original geodesic points
+    membrane_points.extend(path_coords)
 
-        # Find nearby mesh vertices to get local surface normal
-        _, idx = mesh.nearest.vertex(path_coords[i])
-        surface_normal = mesh.vertex_normals[idx]
+    # Cast rays and find intersections
+    ray_intersections = []
 
-        # Calculate membrane cross direction (perpendicular to tangent and surface normal)
-        cross_dir = np.cross(tangent, surface_normal)
-        cross_dir = cross_dir / np.linalg.norm(cross_dir)
+    for point in path_coords:
+        # Cast ray in reference normal direction to find intersection
+        ray_origins = np.array([point])
+        ray_directions = np.array([reference_normal])
 
-        # Generate membrane cross-section points
-        base_left = path_coords[i] - cross_dir * width / 2
-        base_right = path_coords[i] + cross_dir * width / 2
-        top_left = base_left + surface_normal * height
-        top_right = base_right + surface_normal * height
+        # Find intersections with the mesh
+        locations, index_ray, index_tri = mesh.ray.intersects_location(
+            ray_origins=ray_origins,
+            ray_directions=ray_directions
+        )
 
-        # Add points to membrane
-        membrane_points.extend([base_left, base_right, top_left, top_right])
+        if len(locations) > 0:
+            # Find the closest intersection point that's not too close to the original point
+            distances = np.linalg.norm(locations - point, axis=1)
+            valid_intersections = distances > mesh.scale * 0.01  # Filter out self-intersections
 
-        # Create faces (triangles) for this segment
-        if i < len(path_coords) - 1:
-            # First triangle of quad
-            membrane_faces.extend([3,
-                                   vertex_count,
-                                   vertex_count + 1,
-                                   vertex_count + 2])
-            # Second triangle of quad
-            membrane_faces.extend([3,
-                                   vertex_count + 1,
-                                   vertex_count + 3,
-                                   vertex_count + 2])
+            if np.any(valid_intersections):
+                valid_locations = locations[valid_intersections]
+                valid_distances = distances[valid_intersections]
 
-        vertex_count += 4
+                # Choose the closest valid intersection
+                closest_idx = np.argmin(valid_distances)
+                intersection_point = valid_locations[closest_idx]
+                ray_intersections.append(intersection_point)
+            else:
+                # If no valid intersection found, project along reference normal
+                projection_distance = mesh.scale * 0.5
+                projected_point = point + reference_normal * projection_distance
+                ray_intersections.append(projected_point)
+        else:
+            # If no intersection found, project along reference normal
+            projection_distance = mesh.scale * 0.5
+            projected_point = point + reference_normal * projection_distance
+            ray_intersections.append(projected_point)
 
-    # Create PyVista mesh for the membrane
-    membrane_mesh = pv.PolyData(np.array(membrane_points),
-                                np.array(membrane_faces))
+    # Add intersection points to membrane points
+    membrane_points.extend(ray_intersections)
 
-    return membrane_mesh
+    # Convert to numpy array
+    membrane_points = np.array(membrane_points)
+
+    if len(membrane_points) < 4:  # Need at least 4 points for triangulation
+        return None
+
+    # Create simple Delaunay triangulation using PyVista
+    try:
+        # Create point cloud with all points (geodesic + intersections)
+        point_cloud = pv.PolyData(membrane_points)
+
+        # Use 2D Delaunay triangulation (project to best-fit plane)
+        # Find the best fitting plane using PCA of all points
+        centered_points = membrane_points - np.mean(membrane_points, axis=0)
+        U, S, Vt = np.linalg.svd(centered_points, full_matrices=False)
+
+        # Project to 2D using first two principal components
+        points_2d = centered_points @ Vt[:2].T
+
+        # Create 2D Delaunay triangulation
+        points_2d_padded = np.column_stack([points_2d, np.zeros(len(points_2d))])
+        point_cloud_2d = pv.PolyData(points_2d_padded)
+        delaunay_2d = point_cloud_2d.delaunay_2d()
+
+        # Create 3D surface with original points and 2D triangulation
+        membrane_surface = pv.PolyData(membrane_points, delaunay_2d.faces)
+
+        return membrane_surface
+
+    except Exception as e:
+        print(f"Delaunay triangulation failed: {e}")
+        return None
 
 
-def visualize_with_membranes(mesh, high_difficulty_problems, geodesic_results):
+def visualize_with_membranes(mesh, high_difficulty_problems, geodesic_results, reference_normal):
     """
     Visualize the mesh with membrane surfaces along geodesic paths.
+    Updated to pass reference_normal to membrane creation.
 
     Args:
         mesh (trimesh.Trimesh): The input mesh
         high_difficulty_problems (list): List of high-risk regions
         geodesic_results (list): List of geodesic path information
+        reference_normal (np.array): Reference normal direction for membrane draping
     """
     # Create PyVista mesh
     pv_faces = np.hstack([np.full((mesh.faces.shape[0], 1), 3), mesh.faces]).flatten()
@@ -609,14 +642,14 @@ def visualize_with_membranes(mesh, high_difficulty_problems, geodesic_results):
     # Add membranes for each high-risk region
     colors = ['red', 'blue', 'green', 'yellow', 'cyan', 'magenta']
     for i, (problem, geodesic) in enumerate(zip(high_difficulty_problems, geodesic_results)):
-        membrane = create_membrane_from_geodesic(mesh, geodesic)
+        membrane = create_membrane_from_geodesic(mesh, geodesic, reference_normal)
         if membrane is not None:
             color = colors[i % len(colors)]
             plotter.add_mesh(membrane, color=color, opacity=0.8,
                              label=f"Membrane {i + 1}")
 
     plotter.add_legend()
-    plotter.add_text("Mesh with Extraction Membranes", position='upper_left')
+    plotter.add_text("Mesh with Ray-Cast Delaunay Membranes\n(Along Reference Normal)", position='upper_left')
     plotter.show()
 
 # # Example usage:

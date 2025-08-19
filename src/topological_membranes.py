@@ -113,11 +113,13 @@ def analyze_mold_extractability(stl_path, reference_normal=np.array([0, 0, 1]),
     # Find geodesic paths for high-risk regions
     high_risk_regions = [p for p in mold_problems if p['extraction_difficulty'] >= 0.7]
 
+    geodesic_results = []
+
     if high_risk_regions:
         print(f"\n=== GEODESIC PATH ANALYSIS ===")
         print(f"Analyzing {len(high_risk_regions)} high-risk regions...")
 
-        geodesic_results = []
+        # geodesic_results = []
         for region in high_risk_regions:
             geodesic_info = find_longest_geodesic_in_region(mesh, region)
             geodesic_results.append(geodesic_info)
@@ -133,6 +135,12 @@ def analyze_mold_extractability(stl_path, reference_normal=np.array([0, 0, 1]),
     else:
         # Visualize only the highest difficulty results (original function)
         visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_problems, angle_threshold)
+
+    # Create and visualize membranes for high-risk regions
+    high_risk_regions = [p for p in mold_problems if p['extraction_difficulty'] >= 0.7]
+    if high_risk_regions:
+        print("\nGenerating extraction membranes for high-risk regions...")
+        visualize_with_membranes(mesh, high_risk_regions, geodesic_results)
 
     return mold_problems
 
@@ -507,6 +515,109 @@ def visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_pr
     plotter.add_text("Highest Risk Regions Only", position='upper_left')
     plotter.show()
 
+
+def create_membrane_from_geodesic(mesh, geodesic_info, membrane_width=0.1, membrane_height=0.2):
+    """
+    Create a membrane surface along a geodesic path to facilitate mold extraction.
+
+    Args:
+        mesh (trimesh.Trimesh): The input mesh
+        geodesic_info (dict): Geodesic path information from find_longest_geodesic_in_region
+        membrane_width (float): Width of the membrane relative to mesh scale
+        membrane_height (float): Height of the membrane relative to mesh scale
+
+    Returns:
+        pv.PolyData: Membrane surface as PyVista mesh
+    """
+    path_coords = geodesic_info['path_coordinates']
+    if len(path_coords) < 2:
+        return None
+
+    # Scale the width and height based on mesh scale
+    width = membrane_width * mesh.scale
+    height = membrane_height * mesh.scale
+
+    # Generate membrane surface points
+    membrane_points = []
+    membrane_faces = []
+    vertex_count = 0
+
+    # Calculate tangent and normal vectors along the path
+    for i in range(len(path_coords) - 1):
+        # Calculate tangent vector
+        tangent = path_coords[i + 1] - path_coords[i]
+        tangent = tangent / np.linalg.norm(tangent)
+
+        # Find nearby mesh vertices to get local surface normal
+        _, idx = mesh.nearest.vertex(path_coords[i])
+        surface_normal = mesh.vertex_normals[idx]
+
+        # Calculate membrane cross direction (perpendicular to tangent and surface normal)
+        cross_dir = np.cross(tangent, surface_normal)
+        cross_dir = cross_dir / np.linalg.norm(cross_dir)
+
+        # Generate membrane cross-section points
+        base_left = path_coords[i] - cross_dir * width / 2
+        base_right = path_coords[i] + cross_dir * width / 2
+        top_left = base_left + surface_normal * height
+        top_right = base_right + surface_normal * height
+
+        # Add points to membrane
+        membrane_points.extend([base_left, base_right, top_left, top_right])
+
+        # Create faces (triangles) for this segment
+        if i < len(path_coords) - 1:
+            # First triangle of quad
+            membrane_faces.extend([3,
+                                   vertex_count,
+                                   vertex_count + 1,
+                                   vertex_count + 2])
+            # Second triangle of quad
+            membrane_faces.extend([3,
+                                   vertex_count + 1,
+                                   vertex_count + 3,
+                                   vertex_count + 2])
+
+        vertex_count += 4
+
+    # Create PyVista mesh for the membrane
+    membrane_mesh = pv.PolyData(np.array(membrane_points),
+                                np.array(membrane_faces))
+
+    return membrane_mesh
+
+
+def visualize_with_membranes(mesh, high_difficulty_problems, geodesic_results):
+    """
+    Visualize the mesh with membrane surfaces along geodesic paths.
+
+    Args:
+        mesh (trimesh.Trimesh): The input mesh
+        high_difficulty_problems (list): List of high-risk regions
+        geodesic_results (list): List of geodesic path information
+    """
+    # Create PyVista mesh
+    pv_faces = np.hstack([np.full((mesh.faces.shape[0], 1), 3), mesh.faces]).flatten()
+    pv_mesh = pv.PolyData(mesh.vertices, pv_faces)
+
+    # Create visualization
+    plotter = pv.Plotter()
+
+    # Add original mesh
+    plotter.add_mesh(pv_mesh, color='lightgray', opacity=0.7, show_edges=True)
+
+    # Add membranes for each high-risk region
+    colors = ['red', 'blue', 'green', 'yellow', 'cyan', 'magenta']
+    for i, (problem, geodesic) in enumerate(zip(high_difficulty_problems, geodesic_results)):
+        membrane = create_membrane_from_geodesic(mesh, geodesic)
+        if membrane is not None:
+            color = colors[i % len(colors)]
+            plotter.add_mesh(membrane, color=color, opacity=0.8,
+                             label=f"Membrane {i + 1}")
+
+    plotter.add_legend()
+    plotter.add_text("Mesh with Extraction Membranes", position='upper_left')
+    plotter.show()
 
 # # Example usage:
 # if __name__ == "__main__":

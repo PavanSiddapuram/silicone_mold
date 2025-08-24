@@ -516,22 +516,23 @@ def visualize_highest_difficulty_only(mesh, problematic_faces, clusters, mold_pr
     plotter.show()
 
 
-def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal):
+def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal, thickness=0.4):
     """
-    Create a membrane surface along a geodesic path using ray casting and Delaunay triangulation.
-    Casts rays from each geodesic point along the reference normal to find intersections with the mesh,
-    then creates a Delaunay surface between the original points and intersection points.
-    Uses convex hull constraint to prevent triangulation from extending beyond the point cloud.
+    Create a membrane surface along a geodesic path using ray casting and Delaunay triangulation,
+    then create offset surfaces and connect their boundaries with a ruled surface.
 
     Args:
         mesh (trimesh.Trimesh): The input mesh
         geodesic_info (dict): Geodesic path information from find_longest_geodesic_in_region
         reference_normal (np.array): Reference normal direction for ray casting
+        thickness (float): Total thickness of membrane in mm (default: 0.4mm)
 
     Returns:
-        pv.PolyData: Membrane surface as PyVista mesh
+        pv.PolyData: Membrane surface as PyVista mesh with thickness
     """
     from scipy.spatial import ConvexHull
+    import pyvista as pv
+    import numpy as np
 
     path_coords = geodesic_info['path_coordinates']
     if len(path_coords) < 2:
@@ -539,6 +540,9 @@ def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal):
 
     # Normalize reference normal
     reference_normal = -1 * reference_normal / np.linalg.norm(reference_normal)
+
+    # Calculate half thickness (0.2mm on each side)
+    half_thickness = thickness / 2.0
 
     # Lists to store valid points
     valid_geodesic_points = []
@@ -578,14 +582,14 @@ def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal):
         print("Not enough valid intersection points found for membrane creation")
         return None
 
-    # Combine all valid points
+    # Combine all valid points for the original Delaunay surface
     all_membrane_points = valid_geodesic_points + valid_intersection_points
     membrane_points = np.array(all_membrane_points)
 
     if len(membrane_points) < 4:  # Need at least 4 points for triangulation
         return None
 
-    # Create constrained Delaunay triangulation using convex hull boundary
+    # Create the original Delaunay surface (same as before)
     try:
         # Find the best fitting plane using PCA of all points
         centered_points = membrane_points - np.mean(membrane_points, axis=0)
@@ -620,7 +624,6 @@ def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal):
         delaunay_2d = point_cloud_2d.delaunay_2d()
 
         # Filter triangles to only include those within the convex hull
-        # Get triangle centers and check if they're inside the hull
         triangle_faces = delaunay_2d.faces.reshape(-1, 4)[:, 1:4]  # Remove the '3' count
         valid_triangles = []
 
@@ -630,10 +633,9 @@ def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal):
             tri_center = np.mean(tri_verts_2d, axis=0)
 
             # Check if triangle center is inside the convex hull
-            # Simple point-in-convex-polygon test
             hull_points_2d = points_2d[hull_vertices]
 
-            # Use a simple point-in-polygon test
+            # Simple point-in-convex-polygon test
             def point_in_convex_polygon(point, polygon_vertices):
                 """Check if point is inside convex polygon using cross products"""
                 n = len(polygon_vertices)
@@ -664,27 +666,97 @@ def create_membrane_from_geodesic(mesh, geodesic_info, reference_normal):
             print("No valid triangles found within convex hull")
             return None
 
-        # Create faces array for PyVista (add '3' count for each triangle)
         valid_triangles = np.array(valid_triangles)
+
+        # Create faces array for the original surface
         faces_with_count = np.column_stack([
             np.full(len(valid_triangles), 3),
             valid_triangles
         ]).flatten()
 
-        # Create 3D surface with original points and constrained triangulation
-        membrane_surface = pv.PolyData(membrane_points, faces_with_count)
+        # Create the main Delaunay surface
+        main_surface = pv.PolyData(membrane_points, faces_with_count)
 
-        return membrane_surface
+        # STEP 1: Calculate surface normals for the main surface
+        main_surface = main_surface.compute_normals(point_normals=True, cell_normals=False)
+        surface_normals = main_surface.point_data['Normals']
+
+        # STEP 2: Create offset surfaces
+        # Positive offset surface (top)
+        top_offset_points = membrane_points + surface_normals * half_thickness
+        top_surface = pv.PolyData(top_offset_points, faces_with_count)
+
+        # Negative offset surface (bottom)
+        bottom_offset_points = membrane_points - surface_normals * half_thickness
+        bottom_surface = pv.PolyData(bottom_offset_points, faces_with_count)
+
+        # STEP 3: Get boundary points of both offset surfaces
+        # The boundary points are the ones on the convex hull
+        boundary_indices = hull_vertices  # These are the boundary point indices
+
+        # Get boundary points for top and bottom surfaces
+        top_boundary_points = top_offset_points[boundary_indices]
+        bottom_boundary_points = bottom_offset_points[boundary_indices]
+
+        # STEP 4: Create ruled surface between boundary curves
+        # Combine all points: main surface, top surface, bottom surface
+        all_points = np.vstack([membrane_points, top_offset_points, bottom_offset_points])
+        n_points = len(membrane_points)
+
+        all_faces = []
+
+        # Add faces for top surface (normal orientation)
+        for triangle in valid_triangles:
+            all_faces.extend([3,
+                              triangle[0] + n_points,  # top surface indices
+                              triangle[1] + n_points,
+                              triangle[2] + n_points])
+
+        # Add faces for bottom surface (flipped orientation for outward normals)
+        for triangle in valid_triangles:
+            all_faces.extend([3,
+                              triangle[0] + 2 * n_points,  # bottom surface indices
+                              triangle[2] + 2 * n_points,
+                              triangle[1] + 2 * n_points])
+
+        # Add ruled surface faces connecting top and bottom boundaries
+        n_boundary = len(boundary_indices)
+        for i in range(n_boundary):
+            # Get current and next boundary point indices
+            curr_idx = boundary_indices[i]
+            next_idx = boundary_indices[(i + 1) % n_boundary]
+
+            # Points on top surface
+            top_curr = curr_idx + n_points
+            top_next = next_idx + n_points
+
+            # Points on bottom surface
+            bottom_curr = curr_idx + 2 * n_points
+            bottom_next = next_idx + 2 * n_points
+
+            # Create two triangles for the quad between boundaries
+            # Triangle 1: bottom_curr -> bottom_next -> top_curr
+            all_faces.extend([3, bottom_curr, bottom_next, top_curr])
+
+            # Triangle 2: bottom_next -> top_next -> top_curr
+            all_faces.extend([3, bottom_next, top_next, top_curr])
+
+        # Create the final thick membrane
+        thick_membrane = pv.PolyData(all_points, np.array(all_faces))
+
+        return thick_membrane
 
     except Exception as e:
-        print(f"Constrained Delaunay triangulation failed: {e}")
+        print(f"Thick membrane creation failed: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
 def visualize_with_membranes(mesh, high_difficulty_problems, geodesic_results, reference_normal):
     """
-    Visualize the mesh with membrane surfaces along geodesic paths.
-    Updated to pass reference_normal to membrane creation.
+    Visualize the mesh with thick membrane surfaces along geodesic paths.
+    Updated to create membranes with 0.4mm thickness using offset surfaces and ruled boundaries.
 
     Args:
         mesh (trimesh.Trimesh): The input mesh
@@ -702,32 +774,28 @@ def visualize_with_membranes(mesh, high_difficulty_problems, geodesic_results, r
     # Add original mesh
     plotter.add_mesh(pv_mesh, color='lightgray', opacity=1, show_edges=True)
 
-    # Add membranes for each high-risk region
+    # Add thick membranes for each high-risk region
     colors = ['red', 'blue', 'green', 'yellow', 'cyan', 'magenta']
     membrane_count = 0
 
     for i, (problem, geodesic) in enumerate(zip(high_difficulty_problems, geodesic_results)):
-        membrane = create_membrane_from_geodesic(mesh, geodesic, reference_normal)
+        # Create membrane with 0.4mm thickness (0.2mm on each side)
+        membrane = create_membrane_from_geodesic(mesh, geodesic, reference_normal, thickness=0.4)
         if membrane is not None:
             color = colors[membrane_count % len(colors)]
             plotter.add_mesh(membrane, color=color, opacity=1,
-                             label=f"Membrane {membrane_count + 1}")
+                             label=f"Membrane {membrane_count + 1} (0.4mm thick)")
             membrane_count += 1
+
+            # Print membrane info
+            print(f"Created membrane {membrane_count}: {len(membrane.points)} vertices, {membrane.n_faces} faces")
         else:
             print(f"Failed to create membrane {i + 1} - not enough valid intersections")
 
     if membrane_count > 0:
         plotter.add_legend()
 
-    plotter.add_text("Mesh with Constrained Delaunay Membranes\n(Within Convex Hull Boundary)", position='upper_left')
+    plotter.add_text("Mesh with 0.4mm Thick Membranes\n(Offset Surfaces + Ruled Boundaries)", position='upper_left')
     plotter.show()
 
-# # Example usage:
-# if __name__ == "__main__":
-#     # Example usage with different silicone properties:
-#     # analyze_mold_extractability("model.stl", silicone_stretch_limit=2.5)  # Stiffer silicone
-#     # analyze_mold_extractability("model.stl", silicone_stretch_limit=4.0)  # More flexible silicone
-#
-#     # Example with your STL file:
-#     # results = analyze_mold_extractability("your_model.stl")
-#     pass
+    print(f"\nCreated {membrane_count} membranes with 0.4mm thickness")
